@@ -97,6 +97,21 @@ Métricas iniciais:
 - `worker_sales_processed_total`
 - `worker_processing_duration_seconds`
 
+## Testes
+
+Os testes unitários ficam próximos do pacote testado, seguindo o padrão comum em Go.
+
+```bash
+make test
+```
+
+Estrutura atual:
+
+- `internal/httpapi/router_test.go`: testa handlers Gin, validações HTTP e publicação de eventos usando fakes.
+- `internal/httpapi/sales_store.go`: isola o SQL em um store Postgres, deixando o router testável sem banco real.
+
+Próximo passo natural: adicionar testes de integração para Postgres e RabbitMQ com Docker.
+
 ## Eventos iniciais
 
 - `SALE_CREATED`: publicado pela API após validação.
