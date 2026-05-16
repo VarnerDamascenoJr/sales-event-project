@@ -7,6 +7,11 @@ const (
 	SaleCompletedStatus   = "COMPLETED"
 	SaleFailedStatus      = "FAILED"
 	SaleProcessingStatus  = "PROCESSING"
+	PaymentApprovedStatus = "APPROVED"
+	PaymentFailedStatus   = "FAILED"
+	MaxTextLength         = 50
+	MaxMoneyAmountInCents = 1_000_000_000
+	MaxTicketQuantity     = 1_000_000
 )
 
 type SaleCreated struct {
@@ -22,7 +27,7 @@ type SaleCreated struct {
 type SaleItem struct {
 	TicketID  string `json:"ticketId"`
 	Quantity  int    `json:"quantity"`
-	UnitPrice int64  `json:"unitPrice"`
+	UnitPrice int    `json:"unitPrice"`
 }
 
 type EventEnvelope[T any] struct {

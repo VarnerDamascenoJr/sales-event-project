@@ -2,11 +2,14 @@ package httpapi
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/varner/sales-event-project/internal/events"
@@ -20,15 +23,16 @@ type RouterDeps struct {
 }
 
 type CreateSaleRequest struct {
-	SalesEventID string           `json:"salesEventId" binding:"required"`
-	CustomerID   string           `json:"customerId" binding:"required"`
-	Items        []CreateSaleItem `json:"items" binding:"required,min=1,dive"`
+	SalesEventID string           `json:"salesEventId"`
+	CustomerID   string           `json:"customerId"`
+	Status       string           `json:"status"`
+	Items        []CreateSaleItem `json:"items"`
 }
 
 type CreateSaleItem struct {
-	TicketID  string `json:"ticketId" binding:"required"`
-	Quantity  int    `json:"quantity" binding:"required,min=1"`
-	UnitPrice int64  `json:"unitPrice" binding:"required,min=1"`
+	TicketID  string `json:"ticketId"`
+	Quantity  int    `json:"quantity"`
+	UnitPrice int    `json:"unitPrice"`
 }
 
 func NewRouter(deps RouterDeps) *gin.Engine {
@@ -49,7 +53,12 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		}
 
 		if err := validateSaleRequest(c.Request.Context(), deps.DB, req); err != nil {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+			status := http.StatusBadRequest
+			var validationErr errValidation
+			if !errors.As(err, &validationErr) {
+				status = http.StatusInternalServerError
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
 			return
 		}
 
@@ -88,6 +97,25 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 }
 
 func validateSaleRequest(ctx context.Context, db *pgxpool.Pool, req CreateSaleRequest) error {
+	if req.SalesEventID == "" {
+		return errValidation("salesEventId is required")
+	}
+	if len(req.SalesEventID) > events.MaxTextLength {
+		return errValidation("salesEventId is too long; maximum length is 50 characters")
+	}
+	if req.CustomerID == "" {
+		return errValidation("customerId is required")
+	}
+	if len(req.CustomerID) > events.MaxTextLength {
+		return errValidation("customerId is too long; maximum length is 50 characters")
+	}
+	if req.Status != "" && req.Status != events.SaleProcessingStatus {
+		return errValidation("status must be PROCESSING when creating a sale")
+	}
+	if len(req.Items) == 0 {
+		return errValidation("items must contain at least one ticket")
+	}
+
 	var eventExists bool
 	if err := db.QueryRow(ctx, `
 		SELECT EXISTS (
@@ -102,22 +130,55 @@ func validateSaleRequest(ctx context.Context, db *pgxpool.Pool, req CreateSaleRe
 		return errValidation("sales event does not exist or is not published")
 	}
 
-	for _, item := range req.Items {
-		var ticketExists bool
+	totalAmount := 0
+	for index, item := range req.Items {
+		if item.TicketID == "" {
+			return errValidation(fmt.Sprintf("items[%d].ticketId is required", index))
+		}
+		if len(item.TicketID) > events.MaxTextLength {
+			return errValidation(fmt.Sprintf("items[%d].ticketId is too long; maximum length is 50 characters", index))
+		}
+		if item.Quantity < 0 {
+			return errValidation(fmt.Sprintf("items[%d].quantity cannot be negative", index))
+		}
+		if item.Quantity == 0 {
+			return errValidation(fmt.Sprintf("items[%d].quantity must be greater than zero", index))
+		}
+		if item.Quantity > events.MaxTicketQuantity {
+			return errValidation(fmt.Sprintf("items[%d].quantity is too high; maximum is %d", index, events.MaxTicketQuantity))
+		}
+		if item.UnitPrice < 0 {
+			return errValidation(fmt.Sprintf("items[%d].unitPrice cannot be negative", index))
+		}
+		if item.UnitPrice == 0 {
+			return errValidation(fmt.Sprintf("items[%d].unitPrice must be greater than zero", index))
+		}
+		if item.UnitPrice > events.MaxMoneyAmountInCents {
+			return errValidation(fmt.Sprintf("items[%d].unitPrice is too high; maximum is %d", index, events.MaxMoneyAmountInCents))
+		}
+		if totalAmount > events.MaxMoneyAmountInCents-(item.Quantity*item.UnitPrice) {
+			return errValidation(fmt.Sprintf("sale total amount is too high; maximum is %d", events.MaxMoneyAmountInCents))
+		}
+		totalAmount += item.Quantity * item.UnitPrice
+
+		var ticketName string
+		var ticketPrice int
+		var availableQuantity int
 		if err := db.QueryRow(ctx, `
-			SELECT EXISTS (
-				SELECT 1
-				FROM tickets
-				WHERE id = $1
-				  AND sales_event_id = $2
-				  AND available_quantity >= $3
-				  AND price = $4
-			)
-		`, item.TicketID, req.SalesEventID, item.Quantity, item.UnitPrice).Scan(&ticketExists); err != nil {
+			SELECT name, price, available_quantity
+			FROM tickets
+			WHERE id = $1 AND sales_event_id = $2
+		`, item.TicketID, req.SalesEventID).Scan(&ticketName, &ticketPrice, &availableQuantity); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return errValidation(fmt.Sprintf("items[%d].ticketId does not exist for this sales event", index))
+			}
 			return err
 		}
-		if !ticketExists {
-			return errValidation("ticket does not exist, has insufficient quantity, or has a different price")
+		if item.Quantity > availableQuantity {
+			return errValidation(fmt.Sprintf("items[%d].quantity exceeds available tickets; available quantity is %d", index, availableQuantity))
+		}
+		if item.UnitPrice != ticketPrice {
+			return errValidation(fmt.Sprintf("items[%d].unitPrice does not match ticket price", index))
 		}
 	}
 

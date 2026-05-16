@@ -60,9 +60,9 @@ func (p *SalesProcessor) persistSale(ctx context.Context, event events.SaleCreat
 	}
 	defer tx.Rollback(ctx)
 
-	totalAmount := int64(0)
+	totalAmount := 0
 	for _, item := range event.Items {
-		totalAmount += int64(item.Quantity) * item.UnitPrice
+		totalAmount += item.Quantity * item.UnitPrice
 	}
 
 	_, err = tx.Exec(ctx, `
@@ -108,7 +108,7 @@ func (p *SalesProcessor) persistSale(ctx context.Context, event events.SaleCreat
 		SET status = EXCLUDED.status,
 		    amount = EXCLUDED.amount,
 		    processed_at = NOW()
-	`, event.SaleID, status, totalAmount, "simulation")
+	`, event.SaleID, paymentStatusForSale(status), totalAmount, "simulation")
 	if err != nil {
 		return err
 	}
@@ -156,4 +156,11 @@ func statusEventName(status string) string {
 		return "SALE_COMPLETED"
 	}
 	return "SALE_FAILED"
+}
+
+func paymentStatusForSale(status string) string {
+	if status == events.SaleCompletedStatus {
+		return events.PaymentApprovedStatus
+	}
+	return events.PaymentFailedStatus
 }
