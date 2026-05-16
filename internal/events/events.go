@@ -14,6 +14,11 @@ const (
 	MaxTicketQuantity     = 1_000_000
 )
 
+var AvailableSaleStatuses = []string{
+	SaleCompletedStatus,
+	SaleFailedStatus,
+}
+
 type SaleCreated struct {
 	EventID      string     `json:"eventId"`
 	EventType    string     `json:"eventType"`

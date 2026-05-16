@@ -61,6 +61,27 @@ Resposta esperada:
 
 Depois disso, o worker consome `SALE_CREATED` e grava a venda como `COMPLETED`.
 
+## Consultar vendas
+
+Listar vendas de um evento:
+
+```bash
+curl 'http://localhost:8080/sales-events/11111111-1111-1111-1111-111111111111/sales?page=1&pageSize=20&status=COMPLETED'
+```
+
+Filtros disponíveis:
+
+- `page`: página atual. Padrão: `1`.
+- `pageSize`: tamanho da página. Padrão: `20`, máximo: `100`.
+- `status`: `COMPLETED` ou `FAILED`.
+- `eventName`: filtro parcial pelo nome do evento.
+
+Buscar uma venda específica dentro de um evento:
+
+```bash
+curl 'http://localhost:8080/sales-events/11111111-1111-1111-1111-111111111111/sales/generated-sale-uuid'
+```
+
 ## Métricas
 
 Endpoints:

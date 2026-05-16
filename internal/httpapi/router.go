@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -35,6 +36,52 @@ type CreateSaleItem struct {
 	UnitPrice int    `json:"unitPrice"`
 }
 
+type ListSalesResponse struct {
+	Page     int               `json:"page"`
+	PageSize int               `json:"pageSize"`
+	Total    int               `json:"total"`
+	Data     []SaleListItemDTO `json:"data"`
+}
+
+type SaleListItemDTO struct {
+	ID             string    `json:"id"`
+	SalesEventID   string    `json:"salesEventId"`
+	SalesEventName string    `json:"salesEventName"`
+	CustomerID     string    `json:"customerId"`
+	Status         string    `json:"status"`
+	TotalAmount    int       `json:"totalAmount"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+}
+
+type SaleDetailDTO struct {
+	ID             string            `json:"id"`
+	SalesEventID   string            `json:"salesEventId"`
+	SalesEventName string            `json:"salesEventName"`
+	CustomerID     string            `json:"customerId"`
+	Status         string            `json:"status"`
+	TotalAmount    int               `json:"totalAmount"`
+	Payment        PaymentDTO        `json:"payment"`
+	Items          []SaleItemReadDTO `json:"items"`
+	CreatedAt      time.Time         `json:"createdAt"`
+	UpdatedAt      time.Time         `json:"updatedAt"`
+}
+
+type PaymentDTO struct {
+	Status      string    `json:"status"`
+	Amount      int       `json:"amount"`
+	Provider    string    `json:"provider"`
+	ProcessedAt time.Time `json:"processedAt"`
+}
+
+type SaleItemReadDTO struct {
+	TicketID   string    `json:"ticketId"`
+	TicketName string    `json:"ticketName"`
+	Quantity   int       `json:"quantity"`
+	UnitPrice  int       `json:"unitPrice"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
 func NewRouter(deps RouterDeps) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery(), metrics.GinMiddleware())
@@ -44,6 +91,54 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 	})
 
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
+	router.GET("/sales-events/:salesEventId/sales", func(c *gin.Context) {
+		page, pageSize, err := parsePagination(c)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		filter := listSalesFilter{
+			SalesEventID: c.Param("salesEventId"),
+			Status:       c.Query("status"),
+			EventName:    c.Query("eventName"),
+			Page:         page,
+			PageSize:     pageSize,
+		}
+
+		response, err := listSales(c.Request.Context(), deps.DB, filter)
+		if err != nil {
+			status := http.StatusBadRequest
+			var validationErr errValidation
+			if !errors.As(err, &validationErr) {
+				status = http.StatusInternalServerError
+			}
+			c.JSON(status, gin.H{"error": err.Error(), "availableStatuses": events.AvailableSaleStatuses})
+			return
+		}
+
+		c.JSON(http.StatusOK, response)
+	})
+
+	router.GET("/sales-events/:salesEventId/sales/:saleId", func(c *gin.Context) {
+		sale, err := getSale(c.Request.Context(), deps.DB, c.Param("salesEventId"), c.Param("saleId"))
+		if err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, errSalesEventNotFound) || errors.Is(err, errSaleNotFound) {
+				status = http.StatusNotFound
+			}
+
+			var validationErr errValidation
+			if !errors.As(err, &validationErr) && status == http.StatusBadRequest {
+				status = http.StatusInternalServerError
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, sale)
+	})
 
 	router.POST("/sales", func(c *gin.Context) {
 		var req CreateSaleRequest
@@ -94,6 +189,236 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 	})
 
 	return router
+}
+
+type listSalesFilter struct {
+	SalesEventID string
+	Status       string
+	EventName    string
+	Page         int
+	PageSize     int
+}
+
+func parsePagination(c *gin.Context) (int, int, error) {
+	page := 1
+	pageSize := 20
+
+	if rawPage := c.Query("page"); rawPage != "" {
+		parsedPage, err := strconv.Atoi(rawPage)
+		if err != nil {
+			return 0, 0, errValidation("page must be a valid integer")
+		}
+		page = parsedPage
+	}
+
+	if rawPageSize := c.Query("pageSize"); rawPageSize != "" {
+		parsedPageSize, err := strconv.Atoi(rawPageSize)
+		if err != nil {
+			return 0, 0, errValidation("pageSize must be a valid integer")
+		}
+		pageSize = parsedPageSize
+	}
+
+	if page < 1 {
+		return 0, 0, errValidation("page must be greater than or equal to 1")
+	}
+	if pageSize < 1 {
+		return 0, 0, errValidation("pageSize must be greater than or equal to 1")
+	}
+	if pageSize > 100 {
+		return 0, 0, errValidation("pageSize must be less than or equal to 100")
+	}
+
+	return page, pageSize, nil
+}
+
+func listSales(ctx context.Context, db *pgxpool.Pool, filter listSalesFilter) (ListSalesResponse, error) {
+	if err := validateSalesEventID(filter.SalesEventID); err != nil {
+		return ListSalesResponse{}, err
+	}
+	if err := validateSaleStatusFilter(filter.Status); err != nil {
+		return ListSalesResponse{}, err
+	}
+	if len(filter.EventName) > events.MaxTextLength {
+		return ListSalesResponse{}, errValidation("eventName is too long; maximum length is 50 characters")
+	}
+
+	eventExists, err := salesEventExists(ctx, db, filter.SalesEventID)
+	if err != nil {
+		return ListSalesResponse{}, err
+	}
+	if !eventExists {
+		return ListSalesResponse{
+			Page:     filter.Page,
+			PageSize: filter.PageSize,
+			Total:    0,
+			Data:     []SaleListItemDTO{},
+		}, nil
+	}
+
+	offset := (filter.Page - 1) * filter.PageSize
+
+	var total int
+	if err := db.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM sales s
+		JOIN sales_events se ON se.id = s.sales_event_id
+		WHERE s.sales_event_id = $1
+		  AND ($2 = '' OR s.status = $2)
+		  AND ($3 = '' OR se.name ILIKE '%' || $3 || '%')
+	`, filter.SalesEventID, filter.Status, filter.EventName).Scan(&total); err != nil {
+		return ListSalesResponse{}, err
+	}
+
+	rows, err := db.Query(ctx, `
+		SELECT s.id, s.sales_event_id, se.name, s.customer_id, s.status, s.total_amount, s.created_at, s.updated_at
+		FROM sales s
+		JOIN sales_events se ON se.id = s.sales_event_id
+		WHERE s.sales_event_id = $1
+		  AND ($2 = '' OR s.status = $2)
+		  AND ($3 = '' OR se.name ILIKE '%' || $3 || '%')
+		ORDER BY s.created_at DESC
+		LIMIT $4 OFFSET $5
+	`, filter.SalesEventID, filter.Status, filter.EventName, filter.PageSize, offset)
+	if err != nil {
+		return ListSalesResponse{}, err
+	}
+	defer rows.Close()
+
+	data := make([]SaleListItemDTO, 0)
+	for rows.Next() {
+		var sale SaleListItemDTO
+		if err := rows.Scan(
+			&sale.ID,
+			&sale.SalesEventID,
+			&sale.SalesEventName,
+			&sale.CustomerID,
+			&sale.Status,
+			&sale.TotalAmount,
+			&sale.CreatedAt,
+			&sale.UpdatedAt,
+		); err != nil {
+			return ListSalesResponse{}, err
+		}
+		data = append(data, sale)
+	}
+	if err := rows.Err(); err != nil {
+		return ListSalesResponse{}, err
+	}
+
+	return ListSalesResponse{
+		Page:     filter.Page,
+		PageSize: filter.PageSize,
+		Total:    total,
+		Data:     data,
+	}, nil
+}
+
+func getSale(ctx context.Context, db *pgxpool.Pool, salesEventID string, saleID string) (SaleDetailDTO, error) {
+	if err := validateSalesEventID(salesEventID); err != nil {
+		return SaleDetailDTO{}, err
+	}
+	if _, err := uuid.Parse(saleID); err != nil {
+		return SaleDetailDTO{}, errValidation("saleId must be a valid UUID")
+	}
+
+	eventExists, err := salesEventExists(ctx, db, salesEventID)
+	if err != nil {
+		return SaleDetailDTO{}, err
+	}
+	if !eventExists {
+		return SaleDetailDTO{}, errSalesEventNotFound
+	}
+
+	var sale SaleDetailDTO
+	if err := db.QueryRow(ctx, `
+		SELECT s.id, s.sales_event_id, se.name, s.customer_id, s.status, s.total_amount,
+		       p.status, p.amount, p.provider, p.processed_at,
+		       s.created_at, s.updated_at
+		FROM sales s
+		JOIN sales_events se ON se.id = s.sales_event_id
+		JOIN payments p ON p.sale_id = s.id
+		WHERE s.sales_event_id = $1
+		  AND s.id = $2
+	`, salesEventID, saleID).Scan(
+		&sale.ID,
+		&sale.SalesEventID,
+		&sale.SalesEventName,
+		&sale.CustomerID,
+		&sale.Status,
+		&sale.TotalAmount,
+		&sale.Payment.Status,
+		&sale.Payment.Amount,
+		&sale.Payment.Provider,
+		&sale.Payment.ProcessedAt,
+		&sale.CreatedAt,
+		&sale.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return SaleDetailDTO{}, errSaleNotFound
+		}
+		return SaleDetailDTO{}, err
+	}
+
+	rows, err := db.Query(ctx, `
+		SELECT si.ticket_id, t.name, si.quantity, si.unit_price, si.created_at
+		FROM sale_items si
+		JOIN tickets t ON t.id = si.ticket_id
+		WHERE si.sale_id = $1
+		ORDER BY si.created_at ASC
+	`, saleID)
+	if err != nil {
+		return SaleDetailDTO{}, err
+	}
+	defer rows.Close()
+
+	sale.Items = make([]SaleItemReadDTO, 0)
+	for rows.Next() {
+		var item SaleItemReadDTO
+		if err := rows.Scan(&item.TicketID, &item.TicketName, &item.Quantity, &item.UnitPrice, &item.CreatedAt); err != nil {
+			return SaleDetailDTO{}, err
+		}
+		sale.Items = append(sale.Items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return SaleDetailDTO{}, err
+	}
+
+	return sale, nil
+}
+
+func validateSalesEventID(salesEventID string) error {
+	if salesEventID == "" {
+		return errValidation("salesEventId is required")
+	}
+	if _, err := uuid.Parse(salesEventID); err != nil {
+		return errValidation("salesEventId must be a valid UUID")
+	}
+	return nil
+}
+
+func validateSaleStatusFilter(status string) error {
+	if status == "" {
+		return nil
+	}
+	for _, availableStatus := range events.AvailableSaleStatuses {
+		if status == availableStatus {
+			return nil
+		}
+	}
+	return errValidation("status is invalid")
+}
+
+func salesEventExists(ctx context.Context, db *pgxpool.Pool, salesEventID string) (bool, error) {
+	var exists bool
+	err := db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM sales_events
+			WHERE id = $1
+		)
+	`, salesEventID).Scan(&exists)
+	return exists, err
 }
 
 func validateSaleRequest(ctx context.Context, db *pgxpool.Pool, req CreateSaleRequest) error {
@@ -190,3 +515,8 @@ type errValidation string
 func (e errValidation) Error() string {
 	return string(e)
 }
+
+var (
+	errSalesEventNotFound = errors.New("sales event does not exist")
+	errSaleNotFound       = errors.New("sale does not exist for this sales event")
+)
