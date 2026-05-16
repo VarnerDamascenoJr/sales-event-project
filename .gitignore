@@ -1,0 +1,61 @@
+# Go build artifacts
+bin/
+dist/
+build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Go workspace and dependency caches
+go.work
+vendor/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# Logs and runtime files
+*.log
+logs/
+tmp/
+temp/
+*.pid
+
+# Docker and local infrastructure state
+.docker/
+docker-data/
+postgres-data/
+rabbitmq-data/
+prometheus-data/
+grafana-data/
+
+# Database dumps and generated data
+*.dump
+*.sql.gz
+*.sqlite
+*.sqlite3
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Generated docs and reports
+coverage/
+reports/
