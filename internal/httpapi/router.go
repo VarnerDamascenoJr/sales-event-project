@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/mail"
 	"strconv"
 	"time"
 
@@ -40,10 +41,12 @@ type TicketReadModel struct {
 }
 
 type CreateSaleRequest struct {
-	SalesEventID string           `json:"salesEventId"`
-	CustomerID   string           `json:"customerId"`
-	Status       string           `json:"status"`
-	Items        []CreateSaleItem `json:"items"`
+	SalesEventID  string           `json:"salesEventId"`
+	CustomerID    string           `json:"customerId"`
+	CustomerName  string           `json:"customerName"`
+	CustomerEmail string           `json:"customerEmail"`
+	Status        string           `json:"status"`
+	Items         []CreateSaleItem `json:"items"`
 }
 
 type CreateSaleItem struct {
@@ -64,6 +67,8 @@ type SaleListItemDTO struct {
 	SalesEventID   string    `json:"salesEventId"`
 	SalesEventName string    `json:"salesEventName"`
 	CustomerID     string    `json:"customerId"`
+	CustomerName   string    `json:"customerName"`
+	CustomerEmail  string    `json:"customerEmail"`
 	Status         string    `json:"status"`
 	TotalAmount    int       `json:"totalAmount"`
 	CreatedAt      time.Time `json:"createdAt"`
@@ -75,6 +80,8 @@ type SaleDetailDTO struct {
 	SalesEventID   string            `json:"salesEventId"`
 	SalesEventName string            `json:"salesEventName"`
 	CustomerID     string            `json:"customerId"`
+	CustomerName   string            `json:"customerName"`
+	CustomerEmail  string            `json:"customerEmail"`
 	Status         string            `json:"status"`
 	TotalAmount    int               `json:"totalAmount"`
 	Payment        PaymentDTO        `json:"payment"`
@@ -179,13 +186,15 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 
 		saleID := uuid.NewString()
 		event := events.SaleCreated{
-			EventID:      uuid.NewString(),
-			EventType:    "SALE_CREATED",
-			OccurredAt:   time.Now().UTC(),
-			SaleID:       saleID,
-			SalesEventID: req.SalesEventID,
-			CustomerID:   req.CustomerID,
-			Items:        make([]events.SaleItem, 0, len(req.Items)),
+			EventID:       uuid.NewString(),
+			EventType:     "SALE_CREATED",
+			OccurredAt:    time.Now().UTC(),
+			SaleID:        saleID,
+			SalesEventID:  req.SalesEventID,
+			CustomerID:    req.CustomerID,
+			CustomerName:  req.CustomerName,
+			CustomerEmail: req.CustomerEmail,
+			Items:         make([]events.SaleItem, 0, len(req.Items)),
 		}
 
 		for _, item := range req.Items {
@@ -332,6 +341,21 @@ func validateSaleRequest(ctx context.Context, store SalesStore, req CreateSaleRe
 	}
 	if len(req.CustomerID) > events.MaxTextLength {
 		return errValidation("customerId is too long; maximum length is 50 characters")
+	}
+	if req.CustomerName == "" {
+		return errValidation("customerName is required")
+	}
+	if len(req.CustomerName) > events.MaxCustomerNameLength {
+		return errValidation("customerName is too long; maximum length is 100 characters")
+	}
+	if req.CustomerEmail == "" {
+		return errValidation("customerEmail is required")
+	}
+	if len(req.CustomerEmail) > events.MaxEmailLength {
+		return errValidation("customerEmail is too long; maximum length is 255 characters")
+	}
+	if _, err := mail.ParseAddress(req.CustomerEmail); err != nil {
+		return errValidation("customerEmail must be a valid email address")
 	}
 	if req.Status != "" && req.Status != events.SaleProcessingStatus {
 		return errValidation("status must be PROCESSING when creating a sale")

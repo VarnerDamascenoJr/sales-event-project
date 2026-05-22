@@ -60,9 +60,10 @@ func (s *PostgresSalesStore) ListSales(ctx context.Context, filter listSalesFilt
 	}
 
 	rows, err := s.db.Query(ctx, `
-		SELECT s.id, s.sales_event_id, se.name, s.customer_id, s.status, s.total_amount, s.created_at, s.updated_at
+		SELECT s.id, s.sales_event_id, se.name, s.customer_id, c.name, c.email, s.status, s.total_amount, s.created_at, s.updated_at
 		FROM sales s
 		JOIN sales_events se ON se.id = s.sales_event_id
+		JOIN customers c ON c.id = s.customer_id
 		WHERE s.sales_event_id = $1
 		  AND ($2 = '' OR s.status = $2)
 		  AND ($3 = '' OR se.name ILIKE '%' || $3 || '%')
@@ -82,6 +83,8 @@ func (s *PostgresSalesStore) ListSales(ctx context.Context, filter listSalesFilt
 			&sale.SalesEventID,
 			&sale.SalesEventName,
 			&sale.CustomerID,
+			&sale.CustomerName,
+			&sale.CustomerEmail,
 			&sale.Status,
 			&sale.TotalAmount,
 			&sale.CreatedAt,
@@ -106,11 +109,12 @@ func (s *PostgresSalesStore) ListSales(ctx context.Context, filter listSalesFilt
 func (s *PostgresSalesStore) GetSale(ctx context.Context, salesEventID string, saleID string) (SaleDetailDTO, error) {
 	var sale SaleDetailDTO
 	if err := s.db.QueryRow(ctx, `
-		SELECT s.id, s.sales_event_id, se.name, s.customer_id, s.status, s.total_amount,
+		SELECT s.id, s.sales_event_id, se.name, s.customer_id, c.name, c.email, s.status, s.total_amount,
 		       p.status, p.amount, p.provider, p.processed_at,
 		       s.created_at, s.updated_at
 		FROM sales s
 		JOIN sales_events se ON se.id = s.sales_event_id
+		JOIN customers c ON c.id = s.customer_id
 		JOIN payments p ON p.sale_id = s.id
 		WHERE s.sales_event_id = $1
 		  AND s.id = $2
@@ -119,6 +123,8 @@ func (s *PostgresSalesStore) GetSale(ctx context.Context, salesEventID string, s
 		&sale.SalesEventID,
 		&sale.SalesEventName,
 		&sale.CustomerID,
+		&sale.CustomerName,
+		&sale.CustomerEmail,
 		&sale.Status,
 		&sale.TotalAmount,
 		&sale.Payment.Status,

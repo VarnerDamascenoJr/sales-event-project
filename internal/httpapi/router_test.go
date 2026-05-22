@@ -31,8 +31,10 @@ func TestCreateSalePublishesEvent(t *testing.T) {
 	})
 
 	response := performRequest(t, router, http.MethodPost, "/sales", map[string]any{
-		"salesEventId": testSalesEventID,
-		"customerId":   "customer-001",
+		"salesEventId":  testSalesEventID,
+		"customerId":    "customer-001",
+		"customerName":  "Ada Lovelace",
+		"customerEmail": "ada@example.com",
 		"items": []map[string]any{
 			{
 				"ticketId":  testTicketID,
@@ -56,7 +58,7 @@ func TestCreateSalePublishesEvent(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected published value to be events.SaleCreated, got %T", broker.published[0].value)
 	}
-	if event.SalesEventID != testSalesEventID || event.CustomerID != "customer-001" {
+	if event.SalesEventID != testSalesEventID || event.CustomerID != "customer-001" || event.CustomerEmail != "ada@example.com" {
 		t.Fatalf("published event has unexpected payload: %+v", event)
 	}
 }
@@ -71,8 +73,10 @@ func TestCreateSaleRejectsNegativeQuantity(t *testing.T) {
 	})
 
 	response := performRequest(t, router, http.MethodPost, "/sales", map[string]any{
-		"salesEventId": testSalesEventID,
-		"customerId":   "customer-001",
+		"salesEventId":  testSalesEventID,
+		"customerId":    "customer-001",
+		"customerName":  "Ada Lovelace",
+		"customerEmail": "ada@example.com",
 		"items": []map[string]any{
 			{
 				"ticketId":  testTicketID,

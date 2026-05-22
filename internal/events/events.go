@@ -10,6 +10,8 @@ const (
 	PaymentApprovedStatus = "APPROVED"
 	PaymentFailedStatus   = "FAILED"
 	MaxTextLength         = 50
+	MaxCustomerNameLength = 100
+	MaxEmailLength        = 255
 	MaxMoneyAmountInCents = 1_000_000_000
 	MaxTicketQuantity     = 1_000_000
 )
@@ -20,13 +22,15 @@ var AvailableSaleStatuses = []string{
 }
 
 type SaleCreated struct {
-	EventID      string     `json:"eventId"`
-	EventType    string     `json:"eventType"`
-	OccurredAt   time.Time  `json:"occurredAt"`
-	SaleID       string     `json:"saleId"`
-	SalesEventID string     `json:"salesEventId"`
-	CustomerID   string     `json:"customerId"`
-	Items        []SaleItem `json:"items"`
+	EventID       string     `json:"eventId"`
+	EventType     string     `json:"eventType"`
+	OccurredAt    time.Time  `json:"occurredAt"`
+	SaleID        string     `json:"saleId"`
+	SalesEventID  string     `json:"salesEventId"`
+	CustomerID    string     `json:"customerId"`
+	CustomerName  string     `json:"customerName"`
+	CustomerEmail string     `json:"customerEmail"`
+	Items         []SaleItem `json:"items"`
 }
 
 type SaleItem struct {
