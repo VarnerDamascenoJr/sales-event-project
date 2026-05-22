@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS sales (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT sales_customer_id_length CHECK (char_length(customer_id) <= 50),
-    CONSTRAINT sales_status_allowed CHECK (status IN ('COMPLETED', 'FAILED')),
+    CONSTRAINT sales_status_allowed CHECK (status IN ('PENDING_PAYMENT', 'COMPLETED', 'FAILED')),
     CONSTRAINT sales_total_amount_non_negative CHECK (total_amount >= 0),
     CONSTRAINT sales_total_amount_max CHECK (total_amount <= 1000000000)
 );
@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS payments (
     amount INTEGER NOT NULL,
     provider VARCHAR(50) NOT NULL,
     processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT payments_status_allowed CHECK (status IN ('APPROVED', 'FAILED')),
+    CONSTRAINT payments_status_allowed CHECK (status IN ('PENDING', 'APPROVED', 'FAILED')),
     CONSTRAINT payments_amount_non_negative CHECK (amount >= 0),
     CONSTRAINT payments_amount_max CHECK (amount <= 1000000000),
     CONSTRAINT payments_provider_length CHECK (char_length(provider) <= 50)

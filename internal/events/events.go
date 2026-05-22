@@ -3,20 +3,23 @@ package events
 import "time"
 
 const (
-	SaleCreatedRoutingKey = "sale.created"
-	SaleCompletedStatus   = "COMPLETED"
-	SaleFailedStatus      = "FAILED"
-	SaleProcessingStatus  = "PROCESSING"
-	PaymentApprovedStatus = "APPROVED"
-	PaymentFailedStatus   = "FAILED"
-	MaxTextLength         = 50
-	MaxCustomerNameLength = 100
-	MaxEmailLength        = 255
-	MaxMoneyAmountInCents = 1_000_000_000
-	MaxTicketQuantity     = 1_000_000
+	SaleCreatedRoutingKey    = "sale.created"
+	SalePendingPaymentStatus = "PENDING_PAYMENT"
+	SaleCompletedStatus      = "COMPLETED"
+	SaleFailedStatus         = "FAILED"
+	SaleProcessingStatus     = "PROCESSING"
+	PaymentPendingStatus     = "PENDING"
+	PaymentApprovedStatus    = "APPROVED"
+	PaymentFailedStatus      = "FAILED"
+	MaxTextLength            = 50
+	MaxCustomerNameLength    = 100
+	MaxEmailLength           = 255
+	MaxMoneyAmountInCents    = 1_000_000_000
+	MaxTicketQuantity        = 1_000_000
 )
 
 var AvailableSaleStatuses = []string{
+	SalePendingPaymentStatus,
 	SaleCompletedStatus,
 	SaleFailedStatus,
 }
