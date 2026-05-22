@@ -12,7 +12,7 @@ Cliente -> Gin API -> RabbitMQ -> Worker Go -> PostgreSQL
 ## Componentes
 
 - `cmd/api`: API HTTP em Gin. Valida a venda, publica `SALE_CREATED` no RabbitMQ e responde `PROCESSING`.
-- `cmd/worker`: consumidor RabbitMQ. Processa `SALE_CREATED`, reserva ingressos, simula pagamento e persiste o estado no PostgreSQL.
+- `cmd/worker`: consumidor RabbitMQ. Processa `SALE_CREATED`, reserva ingressos, simula pagamento, emite tickets únicos com QR Code e envia o email ao comprador quando o pagamento é aprovado.
 - `migrations`: schema inicial e seed de evento/tickets para testes locais.
 - `deployments/prometheus`: configuração de scrape da API e do worker.
 - `deployments/grafana`: datasource e dashboard provisionados.
@@ -40,6 +40,8 @@ curl -X POST http://localhost:8080/sales \
   -d '{
     "salesEventId": "11111111-1111-1111-1111-111111111111",
     "customerId": "customer-001",
+    "customerName": "Ada Lovelace",
+    "customerEmail": "ada@example.com",
     "items": [
       {
         "ticketId": "22222222-2222-2222-2222-222222222222",
@@ -59,7 +61,15 @@ Resposta esperada:
 }
 ```
 
-Depois disso, o worker consome `SALE_CREATED` e grava a venda como `COMPLETED`.
+Depois disso, o worker consome `SALE_CREATED`, grava a venda como `COMPLETED`, cria um registro em `issued_tickets` para cada ingresso comprado e envia os QR Codes por email.
+
+Se `SMTP_HOST` não estiver configurado, o worker apenas registra no log que o envio foi ignorado. Para envio real, configure:
+
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USERNAME`
+- `SMTP_PASSWORD`
+- `SMTP_FROM`
 
 ## Consultar vendas
 
@@ -109,6 +119,7 @@ Estrutura atual:
 
 - `internal/httpapi/router_test.go`: testa handlers Gin, validações HTTP e publicação de eventos usando fakes.
 - `internal/httpapi/sales_store.go`: isola o SQL em um store Postgres, deixando o router testável sem banco real.
+- `internal/notification`: monta e envia o email com anexos PNG de QR Code.
 
 Próximo passo natural: adicionar testes de integração para Postgres e RabbitMQ com Docker.
 
@@ -122,6 +133,7 @@ Próximo passo natural: adicionar testes de integração para Postgres e RabbitM
 
 - Separar payment worker e notification worker em filas próprias.
 - Publicar eventos da tabela `outbox_events`.
+- Separar retry de notificações com status `FAILED` em um worker próprio.
 - Adicionar migrations versionadas com ferramenta dedicada.
 - Criar autenticação na API.
 - Adicionar testes de integração com Postgres e RabbitMQ.
