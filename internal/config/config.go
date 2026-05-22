@@ -12,6 +12,11 @@ type Config struct {
 	RabbitMQURL       string
 	RabbitMQExchange  string
 	SalesCreatedQueue string
+	SMTPHost          string
+	SMTPPort          string
+	SMTPUsername      string
+	SMTPPassword      string
+	SMTPFrom          string
 }
 
 func Load() Config {
@@ -23,6 +28,11 @@ func Load() Config {
 		RabbitMQURL:       getEnv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
 		RabbitMQExchange:  getEnv("RABBITMQ_EXCHANGE", "sales.exchange"),
 		SalesCreatedQueue: getEnv("SALES_CREATED_QUEUE", "sales.created.queue"),
+		SMTPHost:          getEnv("SMTP_HOST", ""),
+		SMTPPort:          getEnv("SMTP_PORT", "587"),
+		SMTPUsername:      getEnv("SMTP_USERNAME", ""),
+		SMTPPassword:      getEnv("SMTP_PASSWORD", ""),
+		SMTPFrom:          getEnv("SMTP_FROM", ""),
 	}
 }
 

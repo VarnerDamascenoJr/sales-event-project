@@ -15,6 +15,7 @@ import (
 	"github.com/varner/sales-event-project/internal/config"
 	"github.com/varner/sales-event-project/internal/database"
 	"github.com/varner/sales-event-project/internal/messaging"
+	"github.com/varner/sales-event-project/internal/notification"
 	"github.com/varner/sales-event-project/internal/worker"
 )
 
@@ -40,7 +41,14 @@ func main() {
 		log.Fatalf("consume sales queue: %v", err)
 	}
 
-	processor := worker.NewSalesProcessor(db)
+	sender := notification.NewSender(notification.SMTPConfig{
+		Host:     cfg.SMTPHost,
+		Port:     cfg.SMTPPort,
+		Username: cfg.SMTPUsername,
+		Password: cfg.SMTPPassword,
+		From:     cfg.SMTPFrom,
+	})
+	processor := worker.NewSalesProcessor(db, sender)
 	log.Printf("worker consuming queue=%s", cfg.SalesCreatedQueue)
 	startMetricsServer(cfg.WorkerMetricsPort)
 
