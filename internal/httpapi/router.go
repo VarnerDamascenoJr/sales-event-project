@@ -15,12 +15,14 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/varner/sales-event-project/internal/events"
 	"github.com/varner/sales-event-project/internal/metrics"
+	"github.com/varner/sales-event-project/internal/notification"
 )
 
 type RouterDeps struct {
 	Broker EventPublisher
 	DB     *pgxpool.Pool
 	Store  SalesStore
+	Sender notification.Sender
 }
 
 type EventPublisher interface {
@@ -32,6 +34,9 @@ type SalesStore interface {
 	GetTicketForEvent(ctx context.Context, ticketID string, salesEventID string) (TicketReadModel, error)
 	ListSales(ctx context.Context, filter listSalesFilter) (ListSalesResponse, error)
 	GetSale(ctx context.Context, salesEventID string, saleID string) (SaleDetailDTO, error)
+	ProcessPayment(ctx context.Context, req ProcessPaymentRequest) (ProcessPaymentResult, error)
+	MarkTicketEmailSent(ctx context.Context, saleID string) error
+	MarkTicketEmailFailed(ctx context.Context, saleID string, sendErr error) error
 }
 
 type TicketReadModel struct {
@@ -53,6 +58,26 @@ type CreateSaleItem struct {
 	TicketID  string `json:"ticketId"`
 	Quantity  int    `json:"quantity"`
 	UnitPrice int    `json:"unitPrice"`
+}
+
+type CreatePaymentRequest struct {
+	Amount   int    `json:"amount"`
+	Provider string `json:"provider"`
+	Status   string `json:"status"`
+}
+
+type ProcessPaymentRequest struct {
+	SaleID   string
+	Amount   int
+	Provider string
+	Status   string
+}
+
+type ProcessPaymentResult struct {
+	SaleID      string                    `json:"saleId"`
+	SaleStatus  string                    `json:"saleStatus"`
+	Payment     PaymentDTO                `json:"payment"`
+	TicketEmail *notification.TicketEmail `json:"-"`
 }
 
 type ListSalesResponse struct {
@@ -108,6 +133,9 @@ type SaleItemReadDTO struct {
 func NewRouter(deps RouterDeps) *gin.Engine {
 	if deps.Store == nil && deps.DB != nil {
 		deps.Store = NewPostgresSalesStore(deps.DB)
+	}
+	if deps.Sender == nil {
+		deps.Sender = notification.LogSender{}
 	}
 
 	router := gin.New()
@@ -215,6 +243,54 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			"saleId": saleID,
 			"status": events.SaleProcessingStatus,
 		})
+	})
+
+	router.POST("/sales/:saleId/payments", func(c *gin.Context) {
+		var req CreatePaymentRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		paymentReq := ProcessPaymentRequest{
+			SaleID:   c.Param("saleId"),
+			Amount:   req.Amount,
+			Provider: req.Provider,
+			Status:   req.Status,
+		}
+
+		if err := validatePaymentRequest(paymentReq); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		result, err := deps.Store.ProcessPayment(c.Request.Context(), paymentReq)
+		if err != nil {
+			status := http.StatusBadRequest
+			switch {
+			case errors.Is(err, errSaleNotFound):
+				status = http.StatusNotFound
+			case errors.Is(err, errSaleAlreadyPaid), errors.Is(err, errSaleCannotBePaid):
+				status = http.StatusConflict
+			default:
+				var validationErr errValidation
+				if !errors.As(err, &validationErr) {
+					status = http.StatusInternalServerError
+				}
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
+		}
+
+		if result.TicketEmail != nil {
+			if err := deps.Sender.SendTickets(c.Request.Context(), *result.TicketEmail); err != nil {
+				_ = deps.Store.MarkTicketEmailFailed(c.Request.Context(), result.SaleID, err)
+			} else {
+				_ = deps.Store.MarkTicketEmailSent(c.Request.Context(), result.SaleID)
+			}
+		}
+
+		c.JSON(http.StatusCreated, result)
 	})
 
 	return router
@@ -329,6 +405,31 @@ func validateSaleStatusFilter(status string) error {
 	return errValidation("status is invalid")
 }
 
+func validatePaymentRequest(req ProcessPaymentRequest) error {
+	if _, err := uuid.Parse(req.SaleID); err != nil {
+		return errValidation("saleId must be a valid UUID")
+	}
+	if req.Amount <= 0 {
+		return errValidation("amount must be greater than zero")
+	}
+	if req.Amount > events.MaxMoneyAmountInCents {
+		return errValidation(fmt.Sprintf("amount is too high; maximum is %d", events.MaxMoneyAmountInCents))
+	}
+	if req.Provider == "" {
+		return errValidation("provider is required")
+	}
+	if len(req.Provider) > events.MaxTextLength {
+		return errValidation("provider is too long; maximum length is 50 characters")
+	}
+	if req.Status == "" {
+		return nil
+	}
+	if req.Status != events.PaymentApprovedStatus && req.Status != events.PaymentFailedStatus {
+		return errValidation("status must be APPROVED or FAILED")
+	}
+	return nil
+}
+
 func validateSaleRequest(ctx context.Context, store SalesStore, req CreateSaleRequest) error {
 	if req.SalesEventID == "" {
 		return errValidation("salesEventId is required")
@@ -432,4 +533,6 @@ var (
 	errSalesEventNotFound = errors.New("sales event does not exist")
 	errSaleNotFound       = errors.New("sale does not exist for this sales event")
 	errTicketNotFound     = errors.New("ticket does not exist for this sales event")
+	errSaleAlreadyPaid    = errors.New("sale is already paid")
+	errSaleCannotBePaid   = errors.New("sale cannot be paid in its current status")
 )

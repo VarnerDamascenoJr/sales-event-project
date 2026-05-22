@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/varner/sales-event-project/internal/events"
+	"github.com/varner/sales-event-project/internal/notification"
 )
 
 const (
@@ -105,7 +107,7 @@ func TestListSalesRejectsInvalidStatusWithAvailableStatuses(t *testing.T) {
 		AvailableStatuses []string `json:"availableStatuses"`
 	}
 	decodeResponse(t, response, &body)
-	if len(body.AvailableStatuses) != 2 || body.AvailableStatuses[0] != events.SaleCompletedStatus || body.AvailableStatuses[1] != events.SaleFailedStatus {
+	if len(body.AvailableStatuses) != 3 || body.AvailableStatuses[0] != events.SalePendingPaymentStatus || body.AvailableStatuses[1] != events.SaleCompletedStatus || body.AvailableStatuses[2] != events.SaleFailedStatus {
 		t.Fatalf("unexpected available statuses: %+v", body.AvailableStatuses)
 	}
 }
@@ -222,16 +224,68 @@ func TestGetSaleReturnsDetail(t *testing.T) {
 	}
 }
 
-func newTestRouter(store fakeSalesStore) (*gin.Engine, *fakePublisher, fakeSalesStore) {
+func TestCreatePaymentApprovesPendingSale(t *testing.T) {
+	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
+	router, _, store := newTestRouter(fakeSalesStore{
+		paymentResult: ProcessPaymentResult{
+			SaleID:     testSaleID,
+			SaleStatus: events.SaleCompletedStatus,
+			Payment: PaymentDTO{
+				Status:      events.PaymentApprovedStatus,
+				Amount:      10000,
+				Provider:    "credit_card",
+				ProcessedAt: now,
+			},
+			TicketEmail: &notification.TicketEmail{
+				To:             "ada@example.com",
+				CustomerName:   "Ada Lovelace",
+				SalesEventName: "Backend Moderno Conference",
+				StartsAt:       now,
+			},
+		},
+	})
+
+	response := performRequest(t, router, http.MethodPost, "/sales/"+testSaleID+"/payments", map[string]any{
+		"amount":   10000,
+		"provider": "credit_card",
+	})
+
+	assertStatus(t, response, http.StatusCreated)
+
+	var body ProcessPaymentResult
+	decodeResponse(t, response, &body)
+	if body.SaleStatus != events.SaleCompletedStatus || body.Payment.Status != events.PaymentApprovedStatus {
+		t.Fatalf("unexpected payment response: %+v", body)
+	}
+	if !store.emailSent {
+		t.Fatalf("expected ticket email to be marked as sent")
+	}
+}
+
+func TestCreatePaymentRejectsInvalidStatus(t *testing.T) {
+	router, _, _ := newTestRouter(fakeSalesStore{})
+
+	response := performRequest(t, router, http.MethodPost, "/sales/"+testSaleID+"/payments", map[string]any{
+		"amount":   10000,
+		"provider": "credit_card",
+		"status":   "UNKNOWN",
+	})
+
+	assertStatus(t, response, http.StatusBadRequest)
+	assertJSONField(t, response, "error", "status must be APPROVED or FAILED")
+}
+
+func newTestRouter(store fakeSalesStore) (*gin.Engine, *fakePublisher, *fakeSalesStore) {
 	gin.SetMode(gin.TestMode)
 
 	broker := &fakePublisher{}
+	storeRef := &store
 	router := NewRouter(RouterDeps{
 		Broker: broker,
-		Store:  &store,
+		Store:  storeRef,
 	})
 
-	return router, broker, store
+	return router, broker, storeRef
 }
 
 func performRequest(t *testing.T, router http.Handler, method string, path string, body any) *httptest.ResponseRecorder {
@@ -315,6 +369,10 @@ type fakeSalesStore struct {
 	listErr          error
 	sale             SaleDetailDTO
 	getSaleErr       error
+	paymentResult    ProcessPaymentResult
+	paymentErr       error
+	emailSent        bool
+	emailFailed      bool
 	err              error
 }
 
@@ -353,4 +411,24 @@ func (s *fakeSalesStore) GetSale(context.Context, string, string) (SaleDetailDTO
 		return SaleDetailDTO{}, errors.New("test sale was not configured")
 	}
 	return s.sale, nil
+}
+
+func (s *fakeSalesStore) ProcessPayment(_ context.Context, req ProcessPaymentRequest) (ProcessPaymentResult, error) {
+	if s.paymentErr != nil {
+		return ProcessPaymentResult{}, s.paymentErr
+	}
+	if s.paymentResult.SaleID == "" {
+		return ProcessPaymentResult{}, fmt.Errorf("test payment result was not configured for sale %s", req.SaleID)
+	}
+	return s.paymentResult, nil
+}
+
+func (s *fakeSalesStore) MarkTicketEmailSent(context.Context, string) error {
+	s.emailSent = true
+	return nil
+}
+
+func (s *fakeSalesStore) MarkTicketEmailFailed(context.Context, string, error) error {
+	s.emailFailed = true
+	return nil
 }

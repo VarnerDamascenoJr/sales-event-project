@@ -14,6 +14,7 @@ import (
 	"github.com/varner/sales-event-project/internal/database"
 	"github.com/varner/sales-event-project/internal/httpapi"
 	"github.com/varner/sales-event-project/internal/messaging"
+	"github.com/varner/sales-event-project/internal/notification"
 )
 
 func main() {
@@ -32,7 +33,14 @@ func main() {
 	}
 	defer broker.Close()
 
-	router := httpapi.NewRouter(httpapi.RouterDeps{Broker: broker, DB: db})
+	sender := notification.NewSender(notification.SMTPConfig{
+		Host:     cfg.SMTPHost,
+		Port:     cfg.SMTPPort,
+		Username: cfg.SMTPUsername,
+		Password: cfg.SMTPPassword,
+		From:     cfg.SMTPFrom,
+	})
+	router := httpapi.NewRouter(httpapi.RouterDeps{Broker: broker, DB: db, Sender: sender})
 	server := &http.Server{
 		Addr:              ":" + cfg.APIPort,
 		Handler:           router,
