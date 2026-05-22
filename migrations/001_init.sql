@@ -1,5 +1,17 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+CREATE TABLE IF NOT EXISTS customers (
+    id VARCHAR(50) PRIMARY KEY,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    name VARCHAR(100) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT customers_id_length CHECK (char_length(id) <= 50),
+    CONSTRAINT customers_email_length CHECK (char_length(email) <= 255),
+    CONSTRAINT customers_email_basic CHECK (email LIKE '%@%'),
+    CONSTRAINT customers_name_length CHECK (char_length(name) <= 100)
+);
+
 CREATE TABLE IF NOT EXISTS sales_events (
     id UUID PRIMARY KEY,
     name VARCHAR(50) NOT NULL,
@@ -26,7 +38,7 @@ CREATE TABLE IF NOT EXISTS tickets (
 CREATE TABLE IF NOT EXISTS sales (
     id UUID PRIMARY KEY,
     sales_event_id UUID REFERENCES sales_events(id),
-    customer_id VARCHAR(50) NOT NULL,
+    customer_id VARCHAR(50) NOT NULL REFERENCES customers(id),
     status VARCHAR(50) NOT NULL,
     total_amount INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -48,6 +60,16 @@ CREATE TABLE IF NOT EXISTS sale_items (
     CONSTRAINT sale_items_unit_price_positive CHECK (unit_price > 0),
     CONSTRAINT sale_items_unit_price_max CHECK (unit_price <= 1000000000),
     UNIQUE (sale_id, ticket_id)
+);
+
+CREATE TABLE IF NOT EXISTS issued_tickets (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    sale_id UUID NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+    ticket_id UUID NOT NULL REFERENCES tickets(id),
+    customer_id VARCHAR(50) NOT NULL REFERENCES customers(id),
+    qr_code_payload VARCHAR(255) NOT NULL UNIQUE,
+    emailed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS payments (
@@ -74,8 +96,23 @@ CREATE TABLE IF NOT EXISTS outbox_events (
     CONSTRAINT outbox_events_event_type_allowed CHECK (event_type IN ('SALE_COMPLETED', 'SALE_FAILED'))
 );
 
+CREATE TABLE IF NOT EXISTS email_notifications (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    sale_id UUID NOT NULL UNIQUE REFERENCES sales(id) ON DELETE CASCADE,
+    recipient_email VARCHAR(255) NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
+    error_message TEXT,
+    sent_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT email_notifications_status_allowed CHECK (status IN ('PENDING', 'SENT', 'FAILED')),
+    CONSTRAINT email_notifications_recipient_email_length CHECK (char_length(recipient_email) <= 255)
+);
+
 CREATE INDEX IF NOT EXISTS idx_sales_status ON sales(status);
 CREATE INDEX IF NOT EXISTS idx_tickets_sales_event_id ON tickets(sales_event_id);
+CREATE INDEX IF NOT EXISTS idx_issued_tickets_sale_id ON issued_tickets(sale_id);
+CREATE INDEX IF NOT EXISTS idx_email_notifications_status ON email_notifications(status);
 CREATE INDEX IF NOT EXISTS idx_outbox_events_published_at ON outbox_events(published_at);
 
 INSERT INTO sales_events (id, name, status, starts_at)
