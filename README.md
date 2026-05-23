@@ -11,8 +11,8 @@ Cliente -> Gin API -> RabbitMQ -> Worker Go -> PostgreSQL
 
 ## Componentes
 
-- `cmd/api`: API HTTP em Gin. Valida a venda, publica `SALE_CREATED`, confirma pagamentos e envia os QR Codes por email quando o pagamento é aprovado.
-- `cmd/worker`: consumidor RabbitMQ. Processa `SALE_CREATED`, reserva ingressos e grava a venda como `PENDING_PAYMENT`.
+- `cmd/api`: API HTTP em Gin. Valida a venda, publica `SALE_CREATED`, confirma pagamentos e publica `SALE_COMPLETED` quando o pagamento é aprovado.
+- `cmd/worker`: consumidor RabbitMQ. Processa `SALE_CREATED`, reserva ingressos, grava a venda como `PENDING_PAYMENT`, consome `SALE_COMPLETED`, emite tickets únicos com QR Code e envia o email ao comprador.
 - `migrations`: schema inicial e seed de evento/tickets para testes locais.
 - `deployments/prometheus`: configuração de scrape da API e do worker.
 - `deployments/grafana`: datasource e dashboard provisionados.
@@ -65,7 +65,7 @@ Depois disso, o worker consome `SALE_CREATED`, reserva os ingressos e grava a ve
 
 ## Pagar venda
 
-Use o `saleId` retornado na criação da venda. Quando o pagamento é aprovado, a API grava a venda como `COMPLETED`, cria um registro em `issued_tickets` para cada ingresso comprado e envia os QR Codes por email.
+Use o `saleId` retornado na criação da venda. Quando o pagamento é aprovado, a API grava a venda como `COMPLETED` e publica `SALE_COMPLETED` no RabbitMQ. O worker consome esse evento, cria um registro em `issued_tickets` para cada ingresso comprado e envia os QR Codes por email.
 
 ```bash
 curl -X POST http://localhost:8080/sales/generated-sale-uuid/payments \
@@ -93,7 +93,7 @@ Resposta esperada:
 
 Para simular falha de pagamento, envie `"status": "FAILED"`. Nesse caso, a venda vira `FAILED` e a reserva dos ingressos volta para o estoque.
 
-Se `SMTP_HOST` não estiver configurado, a API apenas registra no log que o envio foi ignorado. Para envio real, configure:
+Se `SMTP_HOST` não estiver configurado, o worker apenas registra no log que o envio foi ignorado. Para envio real, configure:
 
 - `SMTP_HOST`
 - `SMTP_PORT`
@@ -156,12 +156,11 @@ Próximo passo natural: adicionar testes de integração para Postgres e RabbitM
 ## Eventos iniciais
 
 - `SALE_CREATED`: publicado pela API após validação.
-- `SALE_COMPLETED`: registrado na outbox quando o pagamento é aprovado.
+- `SALE_COMPLETED`: registrado na outbox e publicado no RabbitMQ quando o pagamento é aprovado.
 - `SALE_FAILED`: registrado na outbox quando a reserva ou pagamento falha.
 
 ## Próximos passos naturais
 
-- Separar payment worker e notification worker em filas próprias.
 - Publicar eventos da tabela `outbox_events`.
 - Separar retry de notificações com status `FAILED` em um worker próprio.
 - Adicionar migrations versionadas com ferramenta dedicada.

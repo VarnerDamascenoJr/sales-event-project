@@ -40,11 +40,7 @@ services:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       RABBITMQ_EXCHANGE: sales.exchange
       SALES_CREATED_QUEUE: sales.created.queue
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USERNAME: ${SMTP_USERNAME:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_FROM: ${SMTP_FROM:-}
+      SALE_COMPLETED_QUEUE: sale.completed.queue
     ports:
       - "8080:8080"
     depends_on:
@@ -64,6 +60,12 @@ services:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       RABBITMQ_EXCHANGE: sales.exchange
       SALES_CREATED_QUEUE: sales.created.queue
+      SALE_COMPLETED_QUEUE: sale.completed.queue
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
     ports:
       - "9091:9091"
     depends_on:
