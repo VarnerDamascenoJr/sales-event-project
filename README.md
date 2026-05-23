@@ -198,6 +198,14 @@ make install-hooks
 
 O hook roda `make lint-fix` e `make test`. Se algum arquivo for alterado automaticamente, o commit é interrompido para você revisar e adicionar as mudanças.
 
+Rodar o fluxo de integração com Docker Compose:
+
+```bash
+make test-integration
+```
+
+Esse teste sobe `postgres`, `rabbitmq`, `api` e `worker`, cria uma venda real, aguarda a reserva assíncrona, confirma pagamento, aguarda emissão de tickets/QR Code e verifica idempotência de `SALE_COMPLETED`. Ele também cobre falha de pagamento restaurando estoque.
+
 Estrutura atual:
 
 - `internal/httpapi/router_test.go`: testa handlers Gin, validações HTTP e publicação de eventos usando fakes.

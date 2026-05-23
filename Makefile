@@ -1,4 +1,4 @@
-.PHONY: up down logs fmt tidy lint lint-fix install-hooks test test-cover build
+.PHONY: up down logs fmt tidy lint lint-fix install-hooks test test-integration test-cover build
 
 up:
 	docker compose up --build
@@ -28,6 +28,10 @@ install-hooks:
 
 test:
 	docker run --rm -v "$$(pwd)":/app -w /app golang:1.22-alpine go test ./...
+
+test-integration:
+	docker compose up --build -d postgres rabbitmq api worker
+	docker run --rm --network host -v "$$(pwd)":/app -w /app golang:1.22-alpine go test -tags=integration ./tests/integration -count=1 -v
 
 test-cover:
 	docker run --rm -v "$$(pwd)":/app -w /app golang:1.22-alpine go test ./... -coverprofile=coverage.out
