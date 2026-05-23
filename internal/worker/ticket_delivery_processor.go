@@ -176,17 +176,22 @@ func (p *TicketDeliveryProcessor) issueTickets(ctx context.Context, tx pgx.Tx, s
 	}
 	defer rows.Close()
 
-	issuedTickets := make([]notification.IssuedTicket, 0)
+	items := make([]completedSaleItem, 0)
 	for rows.Next() {
-		var ticketID string
-		var ticketName string
-		var quantity int
-		if err := rows.Scan(&ticketID, &ticketName, &quantity); err != nil {
+		var item completedSaleItem
+		if err := rows.Scan(&item.TicketID, &item.TicketName, &item.Quantity); err != nil {
 			return nil, err
 		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
-		for sequence := 1; sequence <= quantity; sequence++ {
-			issuedTicketID := deterministicIssuedTicketID(sale.ID, ticketID, sequence)
+	issuedTickets := make([]notification.IssuedTicket, 0)
+	for _, item := range items {
+		for sequence := 1; sequence <= item.Quantity; sequence++ {
+			issuedTicketID := deterministicIssuedTicketID(sale.ID, item.TicketID, sequence)
 			qrPayload := fmt.Sprintf("issued_ticket:%s", issuedTicketID)
 			qrCodePNG, err := qrcode.Encode(qrPayload, qrcode.Medium, 256)
 			if err != nil {
@@ -197,23 +202,26 @@ func (p *TicketDeliveryProcessor) issueTickets(ctx context.Context, tx pgx.Tx, s
 				INSERT INTO issued_tickets (id, sale_id, ticket_id, customer_id, sequence, qr_code_payload)
 				VALUES ($1, $2, $3, $4, $5, $6)
 				ON CONFLICT (sale_id, ticket_id, sequence) DO NOTHING
-			`, issuedTicketID, sale.ID, ticketID, sale.CustomerID, sequence, qrPayload); err != nil {
+			`, issuedTicketID, sale.ID, item.TicketID, sale.CustomerID, sequence, qrPayload); err != nil {
 				return nil, err
 			}
 
 			issuedTickets = append(issuedTickets, notification.IssuedTicket{
 				ID:         issuedTicketID,
-				TicketName: ticketName,
+				TicketName: item.TicketName,
 				QRCodePNG:  qrCodePNG,
 				QRPayload:  qrPayload,
 			})
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
 
 	return issuedTickets, nil
+}
+
+type completedSaleItem struct {
+	TicketID   string
+	TicketName string
+	Quantity   int
 }
 
 func (p *TicketDeliveryProcessor) markTicketEmailSent(ctx context.Context, saleID string) error {
