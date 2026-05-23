@@ -87,6 +87,26 @@ services:
       - api
       - worker
 
+  loki:
+    image: grafana/loki:3.2.1
+    command:
+      - -config.file=/etc/loki/loki.yml
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./deployments/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki-data:/loki
+
+  promtail:
+    image: grafana/promtail:3.2.1
+    command:
+      - -config.file=/etc/promtail/promtail.yml
+    volumes:
+      - ./deployments/promtail/promtail.yml:/etc/promtail/promtail.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+
   grafana:
     image: grafana/grafana:11.3.0
     environment:
@@ -100,9 +120,11 @@ services:
       - ./deployments/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus
+      - loki
 
 volumes:
   postgres-data:
   rabbitmq-data:
   prometheus-data:
+  loki-data:
   grafana-data:
