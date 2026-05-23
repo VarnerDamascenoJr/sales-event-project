@@ -36,6 +36,37 @@ var (
 		Help:    "Worker sale processing duration in seconds.",
 		Buckets: prometheus.DefBuckets,
 	})
+
+	EventPublishedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "events_published_total",
+		Help: "Total number of application events published.",
+	}, []string{"routing_key", "status"})
+
+	PaymentsProcessedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "payments_processed_total",
+		Help: "Total number of payments processed by the API.",
+	}, []string{"status", "provider"})
+
+	WorkerMessagesProcessedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "worker_messages_processed_total",
+		Help: "Total number of worker messages processed.",
+	}, []string{"queue", "status"})
+
+	WorkerMessageDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "worker_message_processing_duration_seconds",
+		Help:    "Worker message processing duration in seconds.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"queue"})
+
+	TicketDeliveryTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "ticket_delivery_total",
+		Help: "Total number of ticket delivery attempts.",
+	}, []string{"status"})
+
+	IssuedTicketsTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "issued_tickets_total",
+		Help: "Total number of issued tickets generated.",
+	})
 )
 
 func GinMiddleware() gin.HandlerFunc {

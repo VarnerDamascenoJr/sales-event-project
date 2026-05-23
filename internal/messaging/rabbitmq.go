@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/rabbitmq/amqp091-go"
+	"github.com/varner/sales-event-project/internal/metrics"
 )
 
 type RabbitMQ struct {
@@ -95,12 +96,18 @@ func (r *RabbitMQ) PublishJSON(ctx context.Context, routingKey string, value any
 		return err
 	}
 
-	return r.channel.PublishWithContext(ctx, r.exchange, routingKey, false, false, amqp091.Publishing{
+	if err := r.channel.PublishWithContext(ctx, r.exchange, routingKey, false, false, amqp091.Publishing{
 		ContentType:  "application/json",
 		DeliveryMode: amqp091.Persistent,
 		Timestamp:    time.Now().UTC(),
 		Body:         body,
-	})
+	}); err != nil {
+		metrics.EventPublishedTotal.WithLabelValues(routingKey, "failed").Inc()
+		return err
+	}
+
+	metrics.EventPublishedTotal.WithLabelValues(routingKey, "published").Inc()
+	return nil
 }
 
 func (r *RabbitMQ) Consume(queue string) (<-chan amqp091.Delivery, error) {

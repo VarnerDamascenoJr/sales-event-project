@@ -1,6 +1,6 @@
 # Sales Event Project
 
-Backend moderno em Go usando Gin, RabbitMQ, PostgreSQL, Prometheus e Grafana.
+Backend moderno em Go usando Gin, RabbitMQ, PostgreSQL, Prometheus, Loki e Grafana.
 
 O projeto modela uma venda de ingressos como fluxo orientado a eventos:
 
@@ -15,7 +15,8 @@ Cliente -> Gin API -> RabbitMQ -> Worker Go -> PostgreSQL
 - `cmd/worker`: consumidor RabbitMQ. Processa `SALE_CREATED`, reserva ingressos, grava a venda como `PENDING_PAYMENT`, consome `SALE_COMPLETED`, emite tickets únicos com QR Code e envia o email ao comprador.
 - `migrations`: schema inicial e seed de evento/tickets para testes locais.
 - `deployments/prometheus`: configuração de scrape da API e do worker.
-- `deployments/grafana`: datasource e dashboard provisionados.
+- `deployments/loki` e `deployments/promtail`: coleta e armazenamento de logs dos containers.
+- `deployments/grafana`: datasources e dashboard provisionados.
 
 ## Como rodar
 
@@ -28,6 +29,7 @@ Serviços principais:
 - API: `http://localhost:8080`
 - RabbitMQ Management: `http://localhost:15672` (`guest` / `guest`)
 - Prometheus: `http://localhost:9090`
+- Loki: `http://localhost:3100`
 - Grafana: `http://localhost:3000` (`admin` / `admin`)
 
 ## Criar venda
@@ -122,20 +124,49 @@ Buscar uma venda específica dentro de um evento:
 curl 'http://localhost:8080/sales-events/11111111-1111-1111-1111-111111111111/sales/generated-sale-uuid'
 ```
 
-## Métricas
+## Observabilidade
 
 Endpoints:
 
 - API: `http://localhost:8080/metrics`
 - Worker: `http://localhost:9091/metrics`
 
-Métricas iniciais:
+Métricas principais:
 
 - `http_requests_total`
 - `http_request_duration_seconds`
 - `sales_created_total`
+- `payments_processed_total`
+- `events_published_total`
 - `worker_sales_processed_total`
-- `worker_processing_duration_seconds`
+- `worker_messages_processed_total`
+- `worker_message_processing_duration_seconds`
+- `ticket_delivery_total`
+- `issued_tickets_total`
+
+Logs:
+
+- Os serviços Go escrevem logs estruturados em JSON.
+- Promtail coleta logs dos containers Docker e envia para Loki.
+- Grafana tem datasources de Prometheus e Loki provisionados.
+
+Consultas úteis no Grafana Explore:
+
+```logql
+{service="api"}
+{service="worker"}
+{service="worker"} |= "ticket email delivered"
+{service="worker"} | json | sale_id="generated-sale-uuid"
+```
+
+Consultas úteis em Prometheus:
+
+```promql
+sum by (status, provider) (payments_processed_total)
+sum by (status) (ticket_delivery_total)
+sum by (queue, status) (worker_messages_processed_total)
+histogram_quantile(0.95, sum by (le, queue) (rate(worker_message_processing_duration_seconds_bucket[5m])))
+```
 
 ## Testes
 

@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,18 +16,22 @@ import (
 	"github.com/varner/sales-event-project/internal/database"
 	"github.com/varner/sales-event-project/internal/events"
 	"github.com/varner/sales-event-project/internal/messaging"
+	"github.com/varner/sales-event-project/internal/metrics"
 	"github.com/varner/sales-event-project/internal/notification"
+	"github.com/varner/sales-event-project/internal/observability"
 	"github.com/varner/sales-event-project/internal/worker"
 )
 
 func main() {
 	cfg := config.Load()
+	observability.ConfigureLogger("sales-event-worker", cfg.AppEnv)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	db, err := database.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
-		log.Fatalf("connect postgres: %v", err)
+		slog.Error("connect postgres failed", "error", err)
+		os.Exit(1)
 	}
 	defer db.Close()
 
@@ -36,17 +40,20 @@ func main() {
 		events.SaleCompletedRoutingKey: cfg.SaleCompletedQueue,
 	}, 20, 2*time.Second)
 	if err != nil {
-		log.Fatalf("connect rabbitmq: %v", err)
+		slog.Error("connect rabbitmq failed", "error", err)
+		os.Exit(1)
 	}
 	defer broker.Close()
 
 	saleCreatedDeliveries, err := broker.Consume(cfg.SalesCreatedQueue)
 	if err != nil {
-		log.Fatalf("consume sales queue: %v", err)
+		slog.Error("consume sales queue failed", "queue", cfg.SalesCreatedQueue, "error", err)
+		os.Exit(1)
 	}
 	saleCompletedDeliveries, err := broker.Consume(cfg.SaleCompletedQueue)
 	if err != nil {
-		log.Fatalf("consume ticket delivery queue: %v", err)
+		slog.Error("consume ticket delivery queue failed", "queue", cfg.SaleCompletedQueue, "error", err)
+		os.Exit(1)
 	}
 
 	salesProcessor := worker.NewSalesProcessor(db)
@@ -57,52 +64,63 @@ func main() {
 		Password: cfg.SMTPPassword,
 		From:     cfg.SMTPFrom,
 	}))
-	log.Printf("worker consuming queues=%s,%s", cfg.SalesCreatedQueue, cfg.SaleCompletedQueue)
+	slog.Info("worker consuming queues", "sales_created_queue", cfg.SalesCreatedQueue, "sale_completed_queue", cfg.SaleCompletedQueue)
 	startMetricsServer(cfg.WorkerMetricsPort)
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("worker stopped")
+			slog.Info("worker stopped")
 			return
 		case delivery, ok := <-saleCreatedDeliveries:
 			if !ok {
-				log.Println("sale created delivery channel closed")
+				slog.Warn("sale created delivery channel closed")
 				return
 			}
 
 			processCtx, processCancel := context.WithTimeout(ctx, 15*time.Second)
+			start := time.Now()
 			if err := salesProcessor.Handle(processCtx, delivery); err != nil {
 				processCancel()
-				log.Printf("process message failed: %v", err)
+				slog.Error("process sale created message failed", "queue", cfg.SalesCreatedQueue, "error", err)
 				_ = delivery.Nack(false, false)
+				recordWorkerMessage(cfg.SalesCreatedQueue, "failed", start)
 				continue
 			}
 			processCancel()
 
 			if err := delivery.Ack(false); err != nil {
-				log.Printf("ack message: %v", err)
+				slog.Error("ack message failed", "queue", cfg.SalesCreatedQueue, "error", err)
 			}
+			recordWorkerMessage(cfg.SalesCreatedQueue, "acked", start)
 		case delivery, ok := <-saleCompletedDeliveries:
 			if !ok {
-				log.Println("sale completed delivery channel closed")
+				slog.Warn("sale completed delivery channel closed")
 				return
 			}
 
 			processCtx, processCancel := context.WithTimeout(ctx, 30*time.Second)
+			start := time.Now()
 			if err := ticketDeliveryProcessor.Handle(processCtx, delivery); err != nil {
 				processCancel()
-				log.Printf("deliver tickets failed: %v", err)
+				slog.Error("deliver tickets failed", "queue", cfg.SaleCompletedQueue, "error", err)
 				_ = delivery.Nack(false, false)
+				recordWorkerMessage(cfg.SaleCompletedQueue, "failed", start)
 				continue
 			}
 			processCancel()
 
 			if err := delivery.Ack(false); err != nil {
-				log.Printf("ack message: %v", err)
+				slog.Error("ack message failed", "queue", cfg.SaleCompletedQueue, "error", err)
 			}
+			recordWorkerMessage(cfg.SaleCompletedQueue, "acked", start)
 		}
 	}
+}
+
+func recordWorkerMessage(queue string, status string, start time.Time) {
+	metrics.WorkerMessagesProcessedTotal.WithLabelValues(queue, status).Inc()
+	metrics.WorkerMessageDuration.WithLabelValues(queue).Observe(time.Since(start).Seconds())
 }
 
 func startMetricsServer(port string) {
@@ -120,9 +138,9 @@ func startMetricsServer(port string) {
 	}
 
 	go func() {
-		log.Printf("worker metrics listening on :%s", port)
+		slog.Info("worker metrics listening", "port", port)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("worker metrics server: %v", err)
+			slog.Error("worker metrics server failed", "error", err)
 		}
 	}()
 }

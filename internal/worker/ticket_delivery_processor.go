@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +14,7 @@ import (
 	"github.com/rabbitmq/amqp091-go"
 	"github.com/skip2/go-qrcode"
 	"github.com/varner/sales-event-project/internal/events"
+	"github.com/varner/sales-event-project/internal/metrics"
 	"github.com/varner/sales-event-project/internal/notification"
 )
 
@@ -32,31 +33,45 @@ func NewTicketDeliveryProcessor(db *pgxpool.Pool, sender notification.Sender) *T
 func (p *TicketDeliveryProcessor) Handle(ctx context.Context, delivery amqp091.Delivery) error {
 	var event events.SaleCompleted
 	if err := json.Unmarshal(delivery.Body, &event); err != nil {
+		metrics.TicketDeliveryTotal.WithLabelValues("invalid_message").Inc()
 		return err
 	}
 
+	start := time.Now()
 	ticketEmail, err := p.prepareTicketEmail(ctx, event.SaleID)
 	if err != nil {
+		metrics.TicketDeliveryTotal.WithLabelValues("failed").Inc()
 		return err
 	}
 	if ticketEmail == nil {
-		log.Printf("ticket delivery skipped sale_id=%s", event.SaleID)
+		metrics.TicketDeliveryTotal.WithLabelValues("skipped").Inc()
+		slog.Info("ticket delivery skipped", "sale_id", event.SaleID)
 		return nil
 	}
 
 	if err := p.sender.SendTickets(ctx, *ticketEmail); err != nil {
-		log.Printf("send ticket email failed sale_id=%s recipient=%s: %v", event.SaleID, ticketEmail.To, err)
+		metrics.TicketDeliveryTotal.WithLabelValues("failed").Inc()
+		slog.Error("send ticket email failed", "sale_id", event.SaleID, "recipient", ticketEmail.To, "error", err)
 		if markErr := p.markTicketEmailFailed(ctx, event.SaleID, err); markErr != nil {
-			log.Printf("mark ticket email failed sale_id=%s: %v", event.SaleID, markErr)
+			slog.Error("mark ticket email failed", "sale_id", event.SaleID, "error", markErr)
 		}
 		return err
 	}
 
 	if err := p.markTicketEmailSent(ctx, event.SaleID); err != nil {
+		metrics.TicketDeliveryTotal.WithLabelValues("failed").Inc()
 		return err
 	}
 
-	log.Printf("delivered ticket email sale_id=%s recipient=%s tickets=%d", event.SaleID, ticketEmail.To, len(ticketEmail.Tickets))
+	metrics.TicketDeliveryTotal.WithLabelValues("sent").Inc()
+	metrics.IssuedTicketsTotal.Add(float64(len(ticketEmail.Tickets)))
+	slog.Info("ticket email delivered",
+		"sale_id", event.SaleID,
+		"sales_event_id", event.SalesEventID,
+		"recipient", ticketEmail.To,
+		"tickets", len(ticketEmail.Tickets),
+		"duration_ms", time.Since(start).Milliseconds(),
+	)
 	return nil
 }
 

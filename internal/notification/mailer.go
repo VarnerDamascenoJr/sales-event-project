@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"log"
+	"log/slog"
 	"mime/multipart"
 	"net/smtp"
 	"net/textproto"
@@ -56,7 +56,11 @@ func NewSender(cfg SMTPConfig) Sender {
 type LogSender struct{}
 
 func (LogSender) SendTickets(_ context.Context, email TicketEmail) error {
-	log.Printf("ticket email skipped: smtp not configured recipient=%s event=%q tickets=%d", email.To, email.SalesEventName, len(email.Tickets))
+	slog.Info("ticket email skipped because smtp is not configured",
+		"recipient", email.To,
+		"sales_event_name", email.SalesEventName,
+		"tickets", len(email.Tickets),
+	)
 	return nil
 }
 

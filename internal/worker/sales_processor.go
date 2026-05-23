@@ -3,7 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -41,7 +41,14 @@ func (p *SalesProcessor) Handle(ctx context.Context, delivery amqp091.Delivery) 
 
 	metrics.WorkerSalesProcessedTotal.WithLabelValues(status).Inc()
 	metrics.WorkerProcessingDuration.Observe(time.Since(start).Seconds())
-	log.Printf("processed sale_id=%s status=%s", event.SaleID, status)
+	slog.Info("sale reservation processed",
+		"sale_id", event.SaleID,
+		"sales_event_id", event.SalesEventID,
+		"customer_id", event.CustomerID,
+		"status", status,
+		"items", len(event.Items),
+		"duration_ms", time.Since(start).Milliseconds(),
+	)
 	return nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/mail"
 	"strconv"
@@ -284,11 +285,21 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 				SalesEventID: result.SalesEventID,
 			}
 			if err := deps.Broker.PublishJSON(c.Request.Context(), events.SaleCompletedRoutingKey, event); err != nil {
+				slog.Error("publish sale completed failed", "sale_id", result.SaleID, "sales_event_id", result.SalesEventID, "error", err)
 				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "payment was recorded but ticket delivery could not be enqueued"})
 				return
 			}
 		}
 
+		metrics.PaymentsProcessedTotal.WithLabelValues(result.Payment.Status, result.Payment.Provider).Inc()
+		slog.Info("payment processed",
+			"sale_id", result.SaleID,
+			"sales_event_id", result.SalesEventID,
+			"payment_status", result.Payment.Status,
+			"sale_status", result.SaleStatus,
+			"provider", result.Payment.Provider,
+			"amount", result.Payment.Amount,
+		)
 		c.JSON(http.StatusAccepted, result)
 	})
 
