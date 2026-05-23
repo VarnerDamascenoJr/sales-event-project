@@ -67,9 +67,12 @@ CREATE TABLE IF NOT EXISTS issued_tickets (
     sale_id UUID NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
     ticket_id UUID NOT NULL REFERENCES tickets(id),
     customer_id VARCHAR(50) NOT NULL REFERENCES customers(id),
+    sequence INTEGER NOT NULL,
     qr_code_payload VARCHAR(255) NOT NULL UNIQUE,
     emailed_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT issued_tickets_sequence_positive CHECK (sequence > 0),
+    UNIQUE (sale_id, ticket_id, sequence)
 );
 
 CREATE TABLE IF NOT EXISTS payments (
