@@ -65,7 +65,9 @@ func (p *SalesProcessor) persistSale(ctx context.Context, event events.SaleCreat
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
 
 	totalAmount := 0
 	for _, item := range event.Items {

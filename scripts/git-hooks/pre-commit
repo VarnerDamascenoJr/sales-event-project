@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+make lint-fix
+make test
+
+if ! git diff --quiet; then
+  echo "pre-commit formatted or fixed files. Review and stage the changes, then commit again."
+  exit 1
+fi

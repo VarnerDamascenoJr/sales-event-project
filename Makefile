@@ -1,4 +1,4 @@
-.PHONY: up down logs fmt tidy test test-cover build
+.PHONY: up down logs fmt tidy lint lint-fix install-hooks test test-cover build
 
 up:
 	docker compose up --build
@@ -14,6 +14,17 @@ fmt:
 
 tidy:
 	docker run --rm -v "$$(pwd)":/app -w /app golang:1.22-alpine go mod tidy
+
+lint:
+	docker run --rm -v "$$(pwd)":/app -w /app golangci/golangci-lint:v1.62.2 golangci-lint run
+
+lint-fix:
+	docker run --rm -v "$$(pwd)":/app -w /app golang:1.22-alpine gofmt -w ./cmd ./internal
+	docker run --rm -v "$$(pwd)":/app -w /app golangci/golangci-lint:v1.62.2 golangci-lint run --fix
+
+install-hooks:
+	cp scripts/git-hooks/pre-commit .git/hooks/pre-commit
+	chmod +x .git/hooks/pre-commit
 
 test:
 	docker run --rm -v "$$(pwd)":/app -w /app golang:1.22-alpine go test ./...

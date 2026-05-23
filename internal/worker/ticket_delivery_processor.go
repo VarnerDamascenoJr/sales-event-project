@@ -80,7 +80,9 @@ func (p *TicketDeliveryProcessor) prepareTicketEmail(ctx context.Context, saleID
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
 
 	sale, err := p.getCompletedSale(ctx, tx, saleID)
 	if err != nil {

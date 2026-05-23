@@ -176,6 +176,28 @@ Os testes unitários ficam próximos do pacote testado, seguindo o padrão comum
 make test
 ```
 
+## Qualidade de código
+
+Formatar e corrigir problemas simples:
+
+```bash
+make lint-fix
+```
+
+Rodar lint sem alterar arquivos:
+
+```bash
+make lint
+```
+
+Instalar o hook local de pre-commit:
+
+```bash
+make install-hooks
+```
+
+O hook roda `make lint-fix` e `make test`. Se algum arquivo for alterado automaticamente, o commit é interrompido para você revisar e adicionar as mudanças.
+
 Estrutura atual:
 
 - `internal/httpapi/router_test.go`: testa handlers Gin, validações HTTP e publicação de eventos usando fakes.

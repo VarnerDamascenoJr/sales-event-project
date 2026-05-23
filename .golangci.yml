@@ -1,0 +1,29 @@
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - bodyclose
+    - errcheck
+    - errorlint
+    - gofmt
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - nilerr
+    - staticcheck
+    - unconvert
+    - unused
+
+linters-settings:
+  gosec:
+    excludes:
+      - G104
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gosec

@@ -181,7 +181,9 @@ func (s *PostgresSalesStore) ProcessPayment(ctx context.Context, req ProcessPaym
 	if err != nil {
 		return ProcessPaymentResult{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
 
 	sale, err := s.getSaleForPayment(ctx, tx, req.SaleID)
 	if err != nil {
