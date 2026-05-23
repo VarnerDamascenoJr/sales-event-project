@@ -251,18 +251,8 @@ func TestCreatePaymentApprovesPendingSale(t *testing.T) {
 	if body.SaleStatus != events.SaleCompletedStatus || body.Payment.Status != events.PaymentApprovedStatus {
 		t.Fatalf("unexpected payment response: %+v", body)
 	}
-	if len(broker.published) != 1 {
-		t.Fatalf("expected one published event, got %d", len(broker.published))
-	}
-	if broker.published[0].routingKey != events.SaleCompletedRoutingKey {
-		t.Fatalf("expected routing key %q, got %q", events.SaleCompletedRoutingKey, broker.published[0].routingKey)
-	}
-	event, ok := broker.published[0].value.(events.SaleCompleted)
-	if !ok {
-		t.Fatalf("expected published value to be events.SaleCompleted, got %T", broker.published[0].value)
-	}
-	if event.SaleID != testSaleID || event.SalesEventID != testSalesEventID {
-		t.Fatalf("published event has unexpected payload: %+v", event)
+	if len(broker.published) != 0 {
+		t.Fatalf("expected payment endpoint to rely on outbox instead of direct publish, got %d published events", len(broker.published))
 	}
 }
 

@@ -276,21 +276,6 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			return
 		}
 
-		if result.SaleStatus == events.SaleCompletedStatus {
-			event := events.SaleCompleted{
-				EventID:      uuid.NewString(),
-				EventType:    "SALE_COMPLETED",
-				OccurredAt:   time.Now().UTC(),
-				SaleID:       result.SaleID,
-				SalesEventID: result.SalesEventID,
-			}
-			if err := deps.Broker.PublishJSON(c.Request.Context(), events.SaleCompletedRoutingKey, event); err != nil {
-				slog.Error("publish sale completed failed", "sale_id", result.SaleID, "sales_event_id", result.SalesEventID, "error", err)
-				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "payment was recorded but ticket delivery could not be enqueued"})
-				return
-			}
-		}
-
 		metrics.PaymentsProcessedTotal.WithLabelValues(result.Payment.Status, result.Payment.Provider).Inc()
 		slog.Info("payment processed",
 			"sale_id", result.SaleID,

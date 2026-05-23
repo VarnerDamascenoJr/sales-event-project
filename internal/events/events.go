@@ -5,6 +5,7 @@ import "time"
 const (
 	SaleCreatedRoutingKey    = "sale.created"
 	SaleCompletedRoutingKey  = "sale.completed"
+	SaleFailedRoutingKey     = "sale.failed"
 	SalePendingPaymentStatus = "PENDING_PAYMENT"
 	SaleCompletedStatus      = "COMPLETED"
 	SaleFailedStatus         = "FAILED"

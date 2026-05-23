@@ -19,6 +19,7 @@ import (
 	"github.com/varner/sales-event-project/internal/metrics"
 	"github.com/varner/sales-event-project/internal/notification"
 	"github.com/varner/sales-event-project/internal/observability"
+	"github.com/varner/sales-event-project/internal/outbox"
 	"github.com/varner/sales-event-project/internal/worker"
 )
 
@@ -45,6 +46,16 @@ func main() {
 	}
 	defer broker.Close()
 
+	outboxBroker, err := messaging.ConnectWithRetry(ctx, cfg.RabbitMQURL, cfg.RabbitMQExchange, map[string]string{
+		events.SaleCreatedRoutingKey:   cfg.SalesCreatedQueue,
+		events.SaleCompletedRoutingKey: cfg.SaleCompletedQueue,
+	}, 20, 2*time.Second)
+	if err != nil {
+		slog.Error("connect rabbitmq for outbox failed", "error", err)
+		os.Exit(1)
+	}
+	defer outboxBroker.Close()
+
 	saleCreatedDeliveries, err := broker.Consume(cfg.SalesCreatedQueue)
 	if err != nil {
 		slog.Error("consume sales queue failed", "queue", cfg.SalesCreatedQueue, "error", err)
@@ -64,8 +75,10 @@ func main() {
 		Password: cfg.SMTPPassword,
 		From:     cfg.SMTPFrom,
 	}))
+	outboxPublisher := outbox.NewPublisher(db, outboxBroker)
 	slog.Info("worker consuming queues", "sales_created_queue", cfg.SalesCreatedQueue, "sale_completed_queue", cfg.SaleCompletedQueue)
 	startMetricsServer(cfg.WorkerMetricsPort)
+	go outboxPublisher.Run(ctx, time.Second, 10)
 
 	for {
 		select {

@@ -11,8 +11,8 @@ Cliente -> Gin API -> RabbitMQ -> Worker Go -> PostgreSQL
 
 ## Componentes
 
-- `cmd/api`: API HTTP em Gin. Valida a venda, publica `SALE_CREATED`, confirma pagamentos e publica `SALE_COMPLETED` quando o pagamento é aprovado.
-- `cmd/worker`: consumidor RabbitMQ. Processa `SALE_CREATED`, reserva ingressos, grava a venda como `PENDING_PAYMENT`, consome `SALE_COMPLETED`, emite tickets únicos com QR Code e envia o email ao comprador.
+- `cmd/api`: API HTTP em Gin. Valida a venda, publica `SALE_CREATED`, confirma pagamentos e grava eventos na outbox.
+- `cmd/worker`: consumidor RabbitMQ e publicador de outbox. Processa `SALE_CREATED`, reserva ingressos, publica eventos pendentes da outbox, consome `SALE_COMPLETED`, emite tickets únicos com QR Code e envia o email ao comprador.
 - `migrations`: schema inicial e seed de evento/tickets para testes locais.
 - `deployments/prometheus`: configuração de scrape da API e do worker.
 - `deployments/loki` e `deployments/promtail`: coleta e armazenamento de logs dos containers.
@@ -67,7 +67,7 @@ Depois disso, o worker consome `SALE_CREATED`, reserva os ingressos e grava a ve
 
 ## Pagar venda
 
-Use o `saleId` retornado na criação da venda. Quando o pagamento é aprovado, a API grava a venda como `COMPLETED` e publica `SALE_COMPLETED` no RabbitMQ. O worker consome esse evento, cria um registro em `issued_tickets` para cada ingresso comprado e envia os QR Codes por email.
+Use o `saleId` retornado na criação da venda. Quando o pagamento é aprovado, a API grava a venda como `COMPLETED` e registra `SALE_COMPLETED` na outbox dentro da mesma transação. O worker publica esse evento no RabbitMQ, consome a mensagem, cria um registro em `issued_tickets` para cada ingresso comprado e envia os QR Codes por email.
 
 ```bash
 curl -X POST http://localhost:8080/sales/generated-sale-uuid/payments \
@@ -222,8 +222,6 @@ Próximo passo natural: adicionar testes de integração para Postgres e RabbitM
 
 ## Próximos passos naturais
 
-- Publicar eventos da tabela `outbox_events`.
 - Separar retry de notificações com status `FAILED` em um worker próprio.
 - Adicionar migrations versionadas com ferramenta dedicada.
 - Criar autenticação na API.
-- Adicionar testes de integração com Postgres e RabbitMQ.

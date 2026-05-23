@@ -235,12 +235,8 @@ func (s *PostgresSalesStore) ProcessPayment(ctx context.Context, req ProcessPaym
 		return ProcessPaymentResult{}, err
 	}
 
-	payload, err := json.Marshal(map[string]any{
-		"saleId":        req.SaleID,
-		"paymentStatus": paymentStatus,
-		"amount":        req.Amount,
-		"provider":      req.Provider,
-	})
+	eventID := uuid.NewString()
+	payload, err := paymentOutboxPayload(eventID, sale.SalesEventID, req, paymentStatus, saleStatus)
 	if err != nil {
 		return ProcessPaymentResult{}, err
 	}
@@ -248,7 +244,7 @@ func (s *PostgresSalesStore) ProcessPayment(ctx context.Context, req ProcessPaym
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO outbox_events (event_id, event_type, aggregate_id, payload)
 		VALUES ($1, $2, $3, $4)
-	`, uuid.NewString(), saleStatusEventName(saleStatus), req.SaleID, payload); err != nil {
+	`, eventID, saleStatusEventName(saleStatus), req.SaleID, payload); err != nil {
 		return ProcessPaymentResult{}, err
 	}
 
@@ -262,6 +258,29 @@ func (s *PostgresSalesStore) ProcessPayment(ctx context.Context, req ProcessPaym
 		SaleStatus:   saleStatus,
 		Payment:      payment,
 	}, nil
+}
+
+func paymentOutboxPayload(eventID string, salesEventID string, req ProcessPaymentRequest, paymentStatus string, saleStatus string) ([]byte, error) {
+	if saleStatus == events.SaleCompletedStatus {
+		return json.Marshal(events.SaleCompleted{
+			EventID:      eventID,
+			EventType:    "SALE_COMPLETED",
+			OccurredAt:   time.Now().UTC(),
+			SaleID:       req.SaleID,
+			SalesEventID: salesEventID,
+		})
+	}
+
+	return json.Marshal(map[string]any{
+		"eventId":       eventID,
+		"eventType":     "SALE_FAILED",
+		"occurredAt":    time.Now().UTC(),
+		"saleId":        req.SaleID,
+		"salesEventId":  salesEventID,
+		"paymentStatus": paymentStatus,
+		"amount":        req.Amount,
+		"provider":      req.Provider,
+	})
 }
 
 type paymentSale struct {
