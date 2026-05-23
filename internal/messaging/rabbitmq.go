@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/rabbitmq/amqp091-go"
-	"github.com/varner/sales-event-project/internal/events"
 )
 
 type RabbitMQ struct {
@@ -16,7 +15,7 @@ type RabbitMQ struct {
 	exchange string
 }
 
-func Connect(url, exchange, salesCreatedQueue string) (*RabbitMQ, error) {
+func Connect(url, exchange string, queues map[string]string) (*RabbitMQ, error) {
 	conn, err := amqp091.Dial(url)
 	if err != nil {
 		return nil, err
@@ -29,14 +28,6 @@ func Connect(url, exchange, salesCreatedQueue string) (*RabbitMQ, error) {
 	}
 
 	if err := ch.ExchangeDeclare(exchange, "topic", true, false, false, false, nil); err != nil {
-		_ = ch.Close()
-		_ = conn.Close()
-		return nil, err
-	}
-
-	if _, err := ch.QueueDeclare(salesCreatedQueue, true, false, false, false, amqp091.Table{
-		"x-dead-letter-exchange": exchange + ".dlx",
-	}); err != nil {
 		_ = ch.Close()
 		_ = conn.Close()
 		return nil, err
@@ -60,19 +51,29 @@ func Connect(url, exchange, salesCreatedQueue string) (*RabbitMQ, error) {
 		return nil, err
 	}
 
-	if err := ch.QueueBind(salesCreatedQueue, events.SaleCreatedRoutingKey, exchange, false, nil); err != nil {
-		_ = ch.Close()
-		_ = conn.Close()
-		return nil, err
+	for routingKey, queue := range queues {
+		if _, err := ch.QueueDeclare(queue, true, false, false, false, amqp091.Table{
+			"x-dead-letter-exchange": exchange + ".dlx",
+		}); err != nil {
+			_ = ch.Close()
+			_ = conn.Close()
+			return nil, err
+		}
+
+		if err := ch.QueueBind(queue, routingKey, exchange, false, nil); err != nil {
+			_ = ch.Close()
+			_ = conn.Close()
+			return nil, err
+		}
 	}
 
 	return &RabbitMQ{conn: conn, channel: ch, exchange: exchange}, nil
 }
 
-func ConnectWithRetry(ctx context.Context, url, exchange, salesCreatedQueue string, attempts int, delay time.Duration) (*RabbitMQ, error) {
+func ConnectWithRetry(ctx context.Context, url, exchange string, queues map[string]string, attempts int, delay time.Duration) (*RabbitMQ, error) {
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
-		broker, err := Connect(url, exchange, salesCreatedQueue)
+		broker, err := Connect(url, exchange, queues)
 		if err == nil {
 			return broker, nil
 		}

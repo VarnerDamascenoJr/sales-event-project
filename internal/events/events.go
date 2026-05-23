@@ -4,6 +4,7 @@ import "time"
 
 const (
 	SaleCreatedRoutingKey    = "sale.created"
+	SaleCompletedRoutingKey  = "sale.completed"
 	SalePendingPaymentStatus = "PENDING_PAYMENT"
 	SaleCompletedStatus      = "COMPLETED"
 	SaleFailedStatus         = "FAILED"
@@ -34,6 +35,14 @@ type SaleCreated struct {
 	CustomerName  string     `json:"customerName"`
 	CustomerEmail string     `json:"customerEmail"`
 	Items         []SaleItem `json:"items"`
+}
+
+type SaleCompleted struct {
+	EventID      string    `json:"eventId"`
+	EventType    string    `json:"eventType"`
+	OccurredAt   time.Time `json:"occurredAt"`
+	SaleID       string    `json:"saleId"`
+	SalesEventID string    `json:"salesEventId"`
 }
 
 type SaleItem struct {

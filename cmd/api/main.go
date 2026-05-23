@@ -12,9 +12,9 @@ import (
 
 	"github.com/varner/sales-event-project/internal/config"
 	"github.com/varner/sales-event-project/internal/database"
+	"github.com/varner/sales-event-project/internal/events"
 	"github.com/varner/sales-event-project/internal/httpapi"
 	"github.com/varner/sales-event-project/internal/messaging"
-	"github.com/varner/sales-event-project/internal/notification"
 )
 
 func main() {
@@ -27,20 +27,16 @@ func main() {
 	}
 	defer db.Close()
 
-	broker, err := messaging.ConnectWithRetry(ctx, cfg.RabbitMQURL, cfg.RabbitMQExchange, cfg.SalesCreatedQueue, 20, 2*time.Second)
+	broker, err := messaging.ConnectWithRetry(ctx, cfg.RabbitMQURL, cfg.RabbitMQExchange, map[string]string{
+		events.SaleCreatedRoutingKey:   cfg.SalesCreatedQueue,
+		events.SaleCompletedRoutingKey: cfg.SaleCompletedQueue,
+	}, 20, 2*time.Second)
 	if err != nil {
 		log.Fatalf("connect rabbitmq: %v", err)
 	}
 	defer broker.Close()
 
-	sender := notification.NewSender(notification.SMTPConfig{
-		Host:     cfg.SMTPHost,
-		Port:     cfg.SMTPPort,
-		Username: cfg.SMTPUsername,
-		Password: cfg.SMTPPassword,
-		From:     cfg.SMTPFrom,
-	})
-	router := httpapi.NewRouter(httpapi.RouterDeps{Broker: broker, DB: db, Sender: sender})
+	router := httpapi.NewRouter(httpapi.RouterDeps{Broker: broker, DB: db})
 	server := &http.Server{
 		Addr:              ":" + cfg.APIPort,
 		Handler:           router,

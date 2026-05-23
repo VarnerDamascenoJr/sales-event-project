@@ -15,14 +15,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/varner/sales-event-project/internal/events"
 	"github.com/varner/sales-event-project/internal/metrics"
-	"github.com/varner/sales-event-project/internal/notification"
 )
 
 type RouterDeps struct {
 	Broker EventPublisher
 	DB     *pgxpool.Pool
 	Store  SalesStore
-	Sender notification.Sender
 }
 
 type EventPublisher interface {
@@ -35,8 +33,6 @@ type SalesStore interface {
 	ListSales(ctx context.Context, filter listSalesFilter) (ListSalesResponse, error)
 	GetSale(ctx context.Context, salesEventID string, saleID string) (SaleDetailDTO, error)
 	ProcessPayment(ctx context.Context, req ProcessPaymentRequest) (ProcessPaymentResult, error)
-	MarkTicketEmailSent(ctx context.Context, saleID string) error
-	MarkTicketEmailFailed(ctx context.Context, saleID string, sendErr error) error
 }
 
 type TicketReadModel struct {
@@ -74,10 +70,10 @@ type ProcessPaymentRequest struct {
 }
 
 type ProcessPaymentResult struct {
-	SaleID      string                    `json:"saleId"`
-	SaleStatus  string                    `json:"saleStatus"`
-	Payment     PaymentDTO                `json:"payment"`
-	TicketEmail *notification.TicketEmail `json:"-"`
+	SaleID       string     `json:"saleId"`
+	SalesEventID string     `json:"salesEventId"`
+	SaleStatus   string     `json:"saleStatus"`
+	Payment      PaymentDTO `json:"payment"`
 }
 
 type ListSalesResponse struct {
@@ -133,9 +129,6 @@ type SaleItemReadDTO struct {
 func NewRouter(deps RouterDeps) *gin.Engine {
 	if deps.Store == nil && deps.DB != nil {
 		deps.Store = NewPostgresSalesStore(deps.DB)
-	}
-	if deps.Sender == nil {
-		deps.Sender = notification.LogSender{}
 	}
 
 	router := gin.New()
@@ -282,15 +275,21 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			return
 		}
 
-		if result.TicketEmail != nil {
-			if err := deps.Sender.SendTickets(c.Request.Context(), *result.TicketEmail); err != nil {
-				_ = deps.Store.MarkTicketEmailFailed(c.Request.Context(), result.SaleID, err)
-			} else {
-				_ = deps.Store.MarkTicketEmailSent(c.Request.Context(), result.SaleID)
+		if result.SaleStatus == events.SaleCompletedStatus {
+			event := events.SaleCompleted{
+				EventID:      uuid.NewString(),
+				EventType:    "SALE_COMPLETED",
+				OccurredAt:   time.Now().UTC(),
+				SaleID:       result.SaleID,
+				SalesEventID: result.SalesEventID,
+			}
+			if err := deps.Broker.PublishJSON(c.Request.Context(), events.SaleCompletedRoutingKey, event); err != nil {
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "payment was recorded but ticket delivery could not be enqueued"})
+				return
 			}
 		}
 
-		c.JSON(http.StatusCreated, result)
+		c.JSON(http.StatusAccepted, result)
 	})
 
 	return router

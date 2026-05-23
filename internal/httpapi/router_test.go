@@ -13,7 +13,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/varner/sales-event-project/internal/events"
-	"github.com/varner/sales-event-project/internal/notification"
 )
 
 const (
@@ -226,21 +225,16 @@ func TestGetSaleReturnsDetail(t *testing.T) {
 
 func TestCreatePaymentApprovesPendingSale(t *testing.T) {
 	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
-	router, _, store := newTestRouter(fakeSalesStore{
+	router, broker, _ := newTestRouter(fakeSalesStore{
 		paymentResult: ProcessPaymentResult{
-			SaleID:     testSaleID,
-			SaleStatus: events.SaleCompletedStatus,
+			SaleID:       testSaleID,
+			SalesEventID: testSalesEventID,
+			SaleStatus:   events.SaleCompletedStatus,
 			Payment: PaymentDTO{
 				Status:      events.PaymentApprovedStatus,
 				Amount:      10000,
 				Provider:    "credit_card",
 				ProcessedAt: now,
-			},
-			TicketEmail: &notification.TicketEmail{
-				To:             "ada@example.com",
-				CustomerName:   "Ada Lovelace",
-				SalesEventName: "Backend Moderno Conference",
-				StartsAt:       now,
 			},
 		},
 	})
@@ -250,15 +244,25 @@ func TestCreatePaymentApprovesPendingSale(t *testing.T) {
 		"provider": "credit_card",
 	})
 
-	assertStatus(t, response, http.StatusCreated)
+	assertStatus(t, response, http.StatusAccepted)
 
 	var body ProcessPaymentResult
 	decodeResponse(t, response, &body)
 	if body.SaleStatus != events.SaleCompletedStatus || body.Payment.Status != events.PaymentApprovedStatus {
 		t.Fatalf("unexpected payment response: %+v", body)
 	}
-	if !store.emailSent {
-		t.Fatalf("expected ticket email to be marked as sent")
+	if len(broker.published) != 1 {
+		t.Fatalf("expected one published event, got %d", len(broker.published))
+	}
+	if broker.published[0].routingKey != events.SaleCompletedRoutingKey {
+		t.Fatalf("expected routing key %q, got %q", events.SaleCompletedRoutingKey, broker.published[0].routingKey)
+	}
+	event, ok := broker.published[0].value.(events.SaleCompleted)
+	if !ok {
+		t.Fatalf("expected published value to be events.SaleCompleted, got %T", broker.published[0].value)
+	}
+	if event.SaleID != testSaleID || event.SalesEventID != testSalesEventID {
+		t.Fatalf("published event has unexpected payload: %+v", event)
 	}
 }
 
@@ -371,8 +375,6 @@ type fakeSalesStore struct {
 	getSaleErr       error
 	paymentResult    ProcessPaymentResult
 	paymentErr       error
-	emailSent        bool
-	emailFailed      bool
 	err              error
 }
 
@@ -421,14 +423,4 @@ func (s *fakeSalesStore) ProcessPayment(_ context.Context, req ProcessPaymentReq
 		return ProcessPaymentResult{}, fmt.Errorf("test payment result was not configured for sale %s", req.SaleID)
 	}
 	return s.paymentResult, nil
-}
-
-func (s *fakeSalesStore) MarkTicketEmailSent(context.Context, string) error {
-	s.emailSent = true
-	return nil
-}
-
-func (s *fakeSalesStore) MarkTicketEmailFailed(context.Context, string, error) error {
-	s.emailFailed = true
-	return nil
 }

@@ -4,15 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/skip2/go-qrcode"
 	"github.com/varner/sales-event-project/internal/events"
-	"github.com/varner/sales-event-project/internal/notification"
 )
 
 type PostgresSalesStore struct {
@@ -253,76 +250,16 @@ func (s *PostgresSalesStore) ProcessPayment(ctx context.Context, req ProcessPaym
 		return ProcessPaymentResult{}, err
 	}
 
-	var ticketEmail *notification.TicketEmail
-	if paymentStatus == events.PaymentApprovedStatus {
-		issuedTickets, err := s.issueTickets(ctx, tx, sale)
-		if err != nil {
-			return ProcessPaymentResult{}, err
-		}
-
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO email_notifications (sale_id, recipient_email, status, created_at, updated_at)
-			VALUES ($1, $2, 'PENDING', NOW(), NOW())
-			ON CONFLICT (sale_id) DO UPDATE
-			SET recipient_email = EXCLUDED.recipient_email,
-			    status = 'PENDING',
-			    error_message = NULL,
-			    updated_at = NOW()
-		`, req.SaleID, sale.CustomerEmail); err != nil {
-			return ProcessPaymentResult{}, err
-		}
-
-		ticketEmail = &notification.TicketEmail{
-			To:             sale.CustomerEmail,
-			CustomerName:   sale.CustomerName,
-			SalesEventName: sale.SalesEventName,
-			StartsAt:       sale.StartsAt,
-			Tickets:        issuedTickets,
-		}
-	}
-
 	if err := tx.Commit(ctx); err != nil {
 		return ProcessPaymentResult{}, err
 	}
 
 	return ProcessPaymentResult{
-		SaleID:      req.SaleID,
-		SaleStatus:  saleStatus,
-		Payment:     payment,
-		TicketEmail: ticketEmail,
+		SaleID:       req.SaleID,
+		SalesEventID: sale.SalesEventID,
+		SaleStatus:   saleStatus,
+		Payment:      payment,
 	}, nil
-}
-
-func (s *PostgresSalesStore) MarkTicketEmailSent(ctx context.Context, saleID string) error {
-	_, err := s.db.Exec(ctx, `
-		UPDATE email_notifications
-		SET status = 'SENT',
-		    error_message = NULL,
-		    sent_at = NOW(),
-		    updated_at = NOW()
-		WHERE sale_id = $1
-	`, saleID)
-	if err != nil {
-		return err
-	}
-
-	_, err = s.db.Exec(ctx, `
-		UPDATE issued_tickets
-		SET emailed_at = NOW()
-		WHERE sale_id = $1
-	`, saleID)
-	return err
-}
-
-func (s *PostgresSalesStore) MarkTicketEmailFailed(ctx context.Context, saleID string, sendErr error) error {
-	_, err := s.db.Exec(ctx, `
-		UPDATE email_notifications
-		SET status = 'FAILED',
-		    error_message = $2,
-		    updated_at = NOW()
-		WHERE sale_id = $1
-	`, saleID, sendErr.Error())
-	return err
 }
 
 type paymentSale struct {
@@ -374,58 +311,6 @@ func (s *PostgresSalesStore) releaseReservedTickets(ctx context.Context, tx pgx.
 		  AND si.sale_id = $1
 	`, saleID)
 	return err
-}
-
-func (s *PostgresSalesStore) issueTickets(ctx context.Context, tx pgx.Tx, sale paymentSale) ([]notification.IssuedTicket, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT si.ticket_id, t.name, si.quantity
-		FROM sale_items si
-		JOIN tickets t ON t.id = si.ticket_id
-		WHERE si.sale_id = $1
-		ORDER BY si.created_at ASC
-	`, sale.ID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	issuedTickets := make([]notification.IssuedTicket, 0)
-	for rows.Next() {
-		var ticketID string
-		var ticketName string
-		var quantity int
-		if err := rows.Scan(&ticketID, &ticketName, &quantity); err != nil {
-			return nil, err
-		}
-
-		for range quantity {
-			issuedTicketID := uuid.NewString()
-			qrPayload := fmt.Sprintf("issued_ticket:%s", issuedTicketID)
-			qrCodePNG, err := qrcode.Encode(qrPayload, qrcode.Medium, 256)
-			if err != nil {
-				return nil, err
-			}
-
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO issued_tickets (id, sale_id, ticket_id, customer_id, qr_code_payload)
-				VALUES ($1, $2, $3, $4, $5)
-			`, issuedTicketID, sale.ID, ticketID, sale.CustomerID, qrPayload); err != nil {
-				return nil, err
-			}
-
-			issuedTickets = append(issuedTickets, notification.IssuedTicket{
-				ID:         issuedTicketID,
-				TicketName: ticketName,
-				QRCodePNG:  qrCodePNG,
-				QRPayload:  qrPayload,
-			})
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return issuedTickets, nil
 }
 
 func saleStatusEventName(status string) string {
