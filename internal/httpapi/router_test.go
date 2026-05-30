@@ -97,7 +97,7 @@ func TestCreateSaleRejectsNegativeQuantity(t *testing.T) {
 func TestListSalesRejectsInvalidStatusWithAvailableStatuses(t *testing.T) {
 	router, _, _ := newTestRouter(fakeSalesStore{salesEventExists: true})
 
-	response := performRequest(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales?status=INVALID", nil)
+	response := performRequestWithAPIKey(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales?status=INVALID", nil, "support-key")
 
 	assertStatus(t, response, http.StatusBadRequest)
 	assertJSONField(t, response, "error", "status is invalid")
@@ -114,7 +114,7 @@ func TestListSalesRejectsInvalidStatusWithAvailableStatuses(t *testing.T) {
 func TestListSalesReturnsEmptyPageWhenSalesEventDoesNotExist(t *testing.T) {
 	router, _, _ := newTestRouter(fakeSalesStore{salesEventExists: false})
 
-	response := performRequest(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales?page=2&pageSize=5", nil)
+	response := performRequestWithAPIKey(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales?page=2&pageSize=5", nil, "support-key")
 
 	assertStatus(t, response, http.StatusOK)
 
@@ -149,7 +149,7 @@ func TestListSalesReturnsPage(t *testing.T) {
 	}
 	router, _, _ := newTestRouter(store)
 
-	response := performRequest(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales?page=1&pageSize=10&status=COMPLETED&eventName=Backend", nil)
+	response := performRequestWithAPIKey(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales?page=1&pageSize=10&status=COMPLETED&eventName=Backend", nil, "support-key")
 
 	assertStatus(t, response, http.StatusOK)
 
@@ -163,7 +163,7 @@ func TestListSalesReturnsPage(t *testing.T) {
 func TestGetSaleReturnsNotFoundWhenSalesEventDoesNotExist(t *testing.T) {
 	router, _, _ := newTestRouter(fakeSalesStore{salesEventExists: false})
 
-	response := performRequest(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales/"+testSaleID, nil)
+	response := performRequestWithAPIKey(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales/"+testSaleID, nil, "support-key")
 
 	assertStatus(t, response, http.StatusNotFound)
 	assertJSONField(t, response, "error", "sales event does not exist")
@@ -175,7 +175,7 @@ func TestGetSaleReturnsNotFoundWhenSaleDoesNotExist(t *testing.T) {
 		getSaleErr:       errSaleNotFound,
 	})
 
-	response := performRequest(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales/"+testSaleID, nil)
+	response := performRequestWithAPIKey(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales/"+testSaleID, nil, "support-key")
 
 	assertStatus(t, response, http.StatusNotFound)
 	assertJSONField(t, response, "error", "sale does not exist for this sales event")
@@ -212,7 +212,7 @@ func TestGetSaleReturnsDetail(t *testing.T) {
 		},
 	})
 
-	response := performRequest(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales/"+testSaleID, nil)
+	response := performRequestWithAPIKey(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales/"+testSaleID, nil, "support-key")
 
 	assertStatus(t, response, http.StatusOK)
 
@@ -239,10 +239,10 @@ func TestCreatePaymentApprovesPendingSale(t *testing.T) {
 		},
 	})
 
-	response := performRequest(t, router, http.MethodPost, "/sales/"+testSaleID+"/payments", map[string]any{
+	response := performRequestWithAPIKey(t, router, http.MethodPost, "/sales/"+testSaleID+"/payments", map[string]any{
 		"amount":   10000,
 		"provider": "credit_card",
-	})
+	}, "payment-provider-key")
 
 	assertStatus(t, response, http.StatusAccepted)
 
@@ -259,11 +259,11 @@ func TestCreatePaymentApprovesPendingSale(t *testing.T) {
 func TestCreatePaymentRejectsInvalidStatus(t *testing.T) {
 	router, _, _ := newTestRouter(fakeSalesStore{})
 
-	response := performRequest(t, router, http.MethodPost, "/sales/"+testSaleID+"/payments", map[string]any{
+	response := performRequestWithAPIKey(t, router, http.MethodPost, "/sales/"+testSaleID+"/payments", map[string]any{
 		"amount":   10000,
 		"provider": "credit_card",
 		"status":   "UNKNOWN",
-	})
+	}, "payment-provider-key")
 
 	assertStatus(t, response, http.StatusBadRequest)
 	assertJSONField(t, response, "error", "status must be APPROVED or FAILED")
@@ -286,9 +286,9 @@ func TestCheckInTicketReturnsCreated(t *testing.T) {
 		},
 	})
 
-	response := performRequest(t, router, http.MethodPost, "/sales-events/"+testSalesEventID+"/check-ins", map[string]any{
+	response := performRequestWithAPIKey(t, router, http.MethodPost, "/sales-events/"+testSalesEventID+"/check-ins", map[string]any{
 		"ticketCode": "issued_ticket:" + issuedTicketID,
-	})
+	}, "check-in-key")
 
 	assertStatus(t, response, http.StatusCreated)
 
@@ -305,9 +305,9 @@ func TestCheckInTicketReturnsCreated(t *testing.T) {
 func TestCheckInTicketRejectsInvalidTicketCode(t *testing.T) {
 	router, _, _ := newTestRouter(fakeSalesStore{})
 
-	response := performRequest(t, router, http.MethodPost, "/sales-events/"+testSalesEventID+"/check-ins", map[string]any{
+	response := performRequestWithAPIKey(t, router, http.MethodPost, "/sales-events/"+testSalesEventID+"/check-ins", map[string]any{
 		"ticketCode": "issued_ticket:not-a-uuid",
-	})
+	}, "check-in-key")
 
 	assertStatus(t, response, http.StatusBadRequest)
 	assertJSONField(t, response, "error", "ticketCode must contain a valid issued ticket id")
@@ -318,12 +318,32 @@ func TestCheckInTicketRejectsDuplicate(t *testing.T) {
 		checkInErr: errTicketAlreadyCheckedIn,
 	})
 
-	response := performRequest(t, router, http.MethodPost, "/sales-events/"+testSalesEventID+"/check-ins", map[string]any{
+	response := performRequestWithAPIKey(t, router, http.MethodPost, "/sales-events/"+testSalesEventID+"/check-ins", map[string]any{
 		"ticketCode": "issued_ticket:bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-	})
+	}, "check-in-key")
 
 	assertStatus(t, response, http.StatusConflict)
 	assertJSONField(t, response, "error", "ticket is already checked in")
+}
+
+func TestProtectedRoutesRequireAPIKey(t *testing.T) {
+	router, _, _ := newTestRouter(fakeSalesStore{})
+
+	response := performRequest(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales", nil)
+
+	assertStatus(t, response, http.StatusUnauthorized)
+	assertJSONField(t, response, "error", "api key is required")
+}
+
+func TestProtectedRoutesRejectWrongRole(t *testing.T) {
+	router, _, _ := newTestRouter(fakeSalesStore{})
+
+	response := performRequestWithAPIKey(t, router, http.MethodPost, "/sales-events/"+testSalesEventID+"/check-ins", map[string]any{
+		"ticketCode": "issued_ticket:bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+	}, "support-key")
+
+	assertStatus(t, response, http.StatusForbidden)
+	assertJSONField(t, response, "error", "api key role is not allowed")
 }
 
 func newTestRouter(store fakeSalesStore) (*gin.Engine, *fakePublisher, *fakeSalesStore) {
@@ -332,8 +352,9 @@ func newTestRouter(store fakeSalesStore) (*gin.Engine, *fakePublisher, *fakeSale
 	broker := &fakePublisher{}
 	storeRef := &store
 	router := NewRouter(RouterDeps{
-		Broker: broker,
-		Store:  storeRef,
+		Broker:    broker,
+		Store:     storeRef,
+		AuthStore: newFakeAuthStore(),
 	})
 
 	return router, broker, storeRef
@@ -355,6 +376,29 @@ func performRequest(t *testing.T, router http.Handler, method string, path strin
 
 	request := httptest.NewRequest(method, path, requestBody)
 	request.Header.Set("Content-Type", "application/json")
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	return response
+}
+
+func performRequestWithAPIKey(t *testing.T, router http.Handler, method string, path string, body any, apiKey string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	var requestBody *bytes.Reader
+	if body != nil {
+		payload, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshal request body: %v", err)
+		}
+		requestBody = bytes.NewReader(payload)
+	} else {
+		requestBody = bytes.NewReader(nil)
+	}
+
+	request := httptest.NewRequest(method, path, requestBody)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(apiKeyHeader, apiKey)
 
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
@@ -393,6 +437,29 @@ func decodeResponse(t *testing.T, response *httptest.ResponseRecorder, target an
 type fakePublisher struct {
 	published []publishedEvent
 	err       error
+}
+
+type fakeAuthStore struct {
+	keys map[string]APIKeyPrincipal
+}
+
+func newFakeAuthStore() *fakeAuthStore {
+	return &fakeAuthStore{
+		keys: map[string]APIKeyPrincipal{
+			"admin-key":            {ID: "auth-admin", Name: "Admin", Role: RoleAdmin},
+			"support-key":          {ID: "auth-support", Name: "Support", Role: RoleSupport},
+			"check-in-key":         {ID: "auth-check-in", Name: "Check-in", Role: RoleCheckIn},
+			"payment-provider-key": {ID: "auth-payment", Name: "Payment Provider", Role: RolePaymentProvider},
+		},
+	}
+}
+
+func (s *fakeAuthStore) AuthenticateAPIKey(_ context.Context, key string) (APIKeyPrincipal, error) {
+	principal, ok := s.keys[key]
+	if !ok {
+		return APIKeyPrincipal{}, errInvalidAPIKey
+	}
+	return principal, nil
 }
 
 type publishedEvent struct {

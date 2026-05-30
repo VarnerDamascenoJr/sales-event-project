@@ -25,6 +25,8 @@ const (
 	salesEventID         = "11111111-1111-1111-1111-111111111111"
 	generalTicketID      = "22222222-2222-2222-2222-222222222222"
 	generalTicketPrice   = 10000
+	checkInAPIKey        = "dev-check-in-key"
+	paymentAPIKey        = "dev-payment-provider-key"
 )
 
 func TestApprovedPaymentIssuesTicketsAndIsIdempotent(t *testing.T) {
@@ -170,7 +172,9 @@ func paySale(t *testing.T, saleID string, amount int, status string) paymentResp
 	}
 
 	var response paymentResponse
-	doJSON(t, http.MethodPost, apiBaseURL()+"/sales/"+saleID+"/payments", body, http.StatusAccepted, &response)
+	doJSONWithHeaders(t, http.MethodPost, apiBaseURL()+"/sales/"+saleID+"/payments", body, http.StatusAccepted, &response, map[string]string{
+		"X-API-Key": paymentAPIKey,
+	})
 	return response
 }
 
@@ -186,7 +190,9 @@ func checkInTicket(t *testing.T, ticketCode string, expectedStatus int) checkInR
 	if expectedStatus == http.StatusCreated {
 		target = &response
 	}
-	doJSON(t, http.MethodPost, apiBaseURL()+"/sales-events/"+salesEventID+"/check-ins", body, expectedStatus, target)
+	doJSONWithHeaders(t, http.MethodPost, apiBaseURL()+"/sales-events/"+salesEventID+"/check-ins", body, expectedStatus, target, map[string]string{
+		"X-API-Key": checkInAPIKey,
+	})
 	return response
 }
 
@@ -216,6 +222,11 @@ func publishSaleCompleted(t *testing.T, saleID string) {
 
 func doJSON(t *testing.T, method string, url string, body any, expectedStatus int, target any) {
 	t.Helper()
+	doJSONWithHeaders(t, method, url, body, expectedStatus, target, nil)
+}
+
+func doJSONWithHeaders(t *testing.T, method string, url string, body any, expectedStatus int, target any, headers map[string]string) {
+	t.Helper()
 
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -227,6 +238,9 @@ func doJSON(t *testing.T, method string, url string, body any, expectedStatus in
 		t.Fatalf("create request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 	if strings.HasPrefix(url, rabbitBaseURL()) {
 		req.SetBasicAuth("guest", "guest")
 	}

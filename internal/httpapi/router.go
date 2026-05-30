@@ -19,9 +19,10 @@ import (
 )
 
 type RouterDeps struct {
-	Broker EventPublisher
-	DB     *pgxpool.Pool
-	Store  SalesStore
+	Broker    EventPublisher
+	DB        *pgxpool.Pool
+	Store     SalesStore
+	AuthStore AuthStore
 }
 
 type EventPublisher interface {
@@ -154,6 +155,9 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 	if deps.Store == nil && deps.DB != nil {
 		deps.Store = NewPostgresSalesStore(deps.DB)
 	}
+	if deps.AuthStore == nil && deps.DB != nil {
+		deps.AuthStore = NewPostgresAuthStore(deps.DB)
+	}
 
 	router := gin.New()
 	router.Use(gin.Recovery(), metrics.GinMiddleware())
@@ -164,7 +168,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
-	router.GET("/sales-events/:salesEventId/sales", func(c *gin.Context) {
+	router.GET("/sales-events/:salesEventId/sales", requireRoles(deps.AuthStore, RoleSupport, RoleAdmin), func(c *gin.Context) {
 		page, pageSize, err := parsePagination(c)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -193,7 +197,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		c.JSON(http.StatusOK, response)
 	})
 
-	router.GET("/sales-events/:salesEventId/sales/:saleId", func(c *gin.Context) {
+	router.GET("/sales-events/:salesEventId/sales/:saleId", requireRoles(deps.AuthStore, RoleSupport, RoleAdmin), func(c *gin.Context) {
 		sale, err := getSale(c.Request.Context(), deps.Store, c.Param("salesEventId"), c.Param("saleId"))
 		if err != nil {
 			status := http.StatusBadRequest
@@ -262,7 +266,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		})
 	})
 
-	router.POST("/sales/:saleId/payments", func(c *gin.Context) {
+	router.POST("/sales/:saleId/payments", requireRoles(deps.AuthStore, RolePaymentProvider, RoleAdmin), func(c *gin.Context) {
 		var req CreatePaymentRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -311,7 +315,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		c.JSON(http.StatusAccepted, result)
 	})
 
-	router.POST("/sales-events/:salesEventId/check-ins", func(c *gin.Context) {
+	router.POST("/sales-events/:salesEventId/check-ins", requireRoles(deps.AuthStore, RoleCheckIn, RoleAdmin), func(c *gin.Context) {
 		var req CreateCheckInRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

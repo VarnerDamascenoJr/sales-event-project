@@ -74,6 +74,7 @@ Use o `saleId` retornado na criação da venda. Quando o pagamento é aprovado, 
 ```bash
 curl -X POST http://localhost:8080/sales/generated-sale-uuid/payments \
   -H 'Content-Type: application/json' \
+  -H 'X-API-Key: dev-payment-provider-key' \
   -d '{
     "amount": 20000,
     "provider": "credit_card"
@@ -123,6 +124,24 @@ RETENTION_SENT_EMAIL_MAX_AGE=2160h
 
 Vendas, pagamentos, tickets emitidos e check-ins nao sao apagados por essa rotina, porque fazem parte do historico comercial e de auditoria do evento.
 
+## Autenticacao local
+
+Alguns endpoints usam API Key no header `X-API-Key`. As migrations criam chaves locais para desenvolvimento:
+
+- `dev-admin-key`: role `ADMIN`.
+- `dev-support-key`: role `SUPPORT`.
+- `dev-check-in-key`: role `CHECK_IN`.
+- `dev-payment-provider-key`: role `PAYMENT_PROVIDER`.
+
+Permissoes iniciais:
+
+- `POST /sales`: publico.
+- `POST /sales/:saleId/payments`: `PAYMENT_PROVIDER` ou `ADMIN`.
+- `GET /sales-events/:salesEventId/sales`: `SUPPORT` ou `ADMIN`.
+- `GET /sales-events/:salesEventId/sales/:saleId`: `SUPPORT` ou `ADMIN`.
+- `POST /sales-events/:salesEventId/check-ins`: `CHECK_IN` ou `ADMIN`.
+- `/healthz` e `/metrics`: publicos no ambiente local.
+
 ## Validar entrada
 
 Depois que o ticket é emitido, o QR Code contém um payload no formato `issued_ticket:{issuedTicketId}`. Use esse valor no check-in do evento:
@@ -130,6 +149,7 @@ Depois que o ticket é emitido, o QR Code contém um payload no formato `issued_
 ```bash
 curl -X POST http://localhost:8080/sales-events/11111111-1111-1111-1111-111111111111/check-ins \
   -H 'Content-Type: application/json' \
+  -H 'X-API-Key: dev-check-in-key' \
   -d '{
     "ticketCode": "issued_ticket:generated-issued-ticket-uuid"
   }'
@@ -158,7 +178,8 @@ O mesmo ticket nao pode entrar duas vezes. A tabela `ticket_check_ins` tem uma r
 Listar vendas de um evento:
 
 ```bash
-curl 'http://localhost:8080/sales-events/11111111-1111-1111-1111-111111111111/sales?page=1&pageSize=20&status=COMPLETED'
+curl 'http://localhost:8080/sales-events/11111111-1111-1111-1111-111111111111/sales?page=1&pageSize=20&status=COMPLETED' \
+  -H 'X-API-Key: dev-support-key'
 ```
 
 Filtros disponíveis:
@@ -171,7 +192,8 @@ Filtros disponíveis:
 Buscar uma venda específica dentro de um evento:
 
 ```bash
-curl 'http://localhost:8080/sales-events/11111111-1111-1111-1111-111111111111/sales/generated-sale-uuid'
+curl 'http://localhost:8080/sales-events/11111111-1111-1111-1111-111111111111/sales/generated-sale-uuid' \
+  -H 'X-API-Key: dev-support-key'
 ```
 
 ## Observabilidade
