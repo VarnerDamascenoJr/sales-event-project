@@ -40,7 +40,19 @@ func main() {
 	}
 	defer broker.Close()
 
-	router := httpapi.NewRouter(httpapi.RouterDeps{Broker: broker, DB: db})
+	var publicRateLimiter *httpapi.RateLimiter
+	if cfg.PublicRateLimitEnabled {
+		publicRateLimiter = httpapi.NewRateLimiter(cfg.PublicRateLimitRequests, cfg.PublicRateLimitBurst, 5*time.Minute)
+	}
+
+	router := httpapi.NewRouter(httpapi.RouterDeps{
+		Broker:               broker,
+		DB:                   db,
+		WebhookSecret:        cfg.EmailWebhookSecret,
+		PaymentWebhookSecret: cfg.PaymentWebhookSecret,
+		MetricsProtected:     cfg.MetricsProtected,
+		PublicRateLimiter:    publicRateLimiter,
+	})
 	server := &http.Server{
 		Addr:              ":" + cfg.APIPort,
 		Handler:           router,

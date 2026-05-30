@@ -5,6 +5,9 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,6 +30,8 @@ const (
 	generalTicketPrice   = 10000
 	checkInAPIKey        = "dev-check-in-key"
 	paymentAPIKey        = "dev-payment-provider-key"
+	emailWebhookSecret   = "dev-email-webhook-secret"
+	paymentWebhookSecret = "dev-payment-webhook-secret"
 )
 
 func TestApprovedPaymentIssuesTicketsAndIsIdempotent(t *testing.T) {
@@ -49,13 +54,20 @@ func TestApprovedPaymentIssuesTicketsAndIsIdempotent(t *testing.T) {
 		t.Fatalf("expected inventory to decrease by 2 after reservation, before=%d got=%d", beforeInventory, got)
 	}
 
-	payment := paySale(t, saleID, 2*generalTicketPrice, "APPROVED")
+	intent := createPaymentIntent(t, saleID, 2*generalTicketPrice)
+	if intent.Status != "PENDING" || intent.ID == "" {
+		t.Fatalf("unexpected payment intent response: %+v", intent)
+	}
+
+	payment := completePaymentByWebhook(t, intent.ID, saleID, 2*generalTicketPrice, "APPROVED")
 	if payment.SaleStatus != "COMPLETED" || payment.Payment.Status != "APPROVED" {
 		t.Fatalf("unexpected payment response: %+v", payment)
 	}
 
 	waitForIssuedTickets(t, ctx, db, saleID, 2)
 	waitForEmailStatus(t, ctx, db, saleID, "SENT")
+	recordEmailEvent(t, saleID, "OPENED", http.StatusAccepted)
+	waitForEmailStatus(t, ctx, db, saleID, "OPENED")
 
 	ticketCode := issuedTicketCode(t, ctx, db, saleID)
 	checkIn := checkInTicket(t, ticketCode, http.StatusCreated)
@@ -95,7 +107,8 @@ func TestFailedPaymentRestoresInventory(t *testing.T) {
 		t.Fatalf("expected inventory to decrease by 1 after reservation, before=%d got=%d", beforeInventory, got)
 	}
 
-	payment := paySale(t, saleID, generalTicketPrice, "FAILED")
+	intent := createPaymentIntent(t, saleID, generalTicketPrice)
+	payment := completePaymentByWebhook(t, intent.ID, saleID, generalTicketPrice, "FAILED")
 	if payment.SaleStatus != "FAILED" || payment.Payment.Status != "FAILED" {
 		t.Fatalf("unexpected failed payment response: %+v", payment)
 	}
@@ -129,6 +142,16 @@ type paymentResponse struct {
 		Amount   int    `json:"amount"`
 		Provider string `json:"provider"`
 	} `json:"payment"`
+}
+
+type paymentIntentResponse struct {
+	ID                string `json:"id"`
+	SaleID            string `json:"saleId"`
+	Status            string `json:"status"`
+	Provider          string `json:"provider"`
+	Amount            int    `json:"amount"`
+	ProviderReference string `json:"providerReference"`
+	ClientSecret      string `json:"clientSecret"`
 }
 
 type checkInResponse struct {
@@ -178,6 +201,62 @@ func paySale(t *testing.T, saleID string, amount int, status string) paymentResp
 	return response
 }
 
+func createPaymentIntent(t *testing.T, saleID string, amount int) paymentIntentResponse {
+	t.Helper()
+
+	body := map[string]any{
+		"amount":   amount,
+		"provider": "integration_test",
+	}
+
+	var response paymentIntentResponse
+	doJSON(t, http.MethodPost, apiBaseURL()+"/sales/"+saleID+"/payment-intents", body, http.StatusAccepted, &response)
+	return response
+}
+
+func completePaymentByWebhook(t *testing.T, paymentIntentID string, saleID string, amount int, status string) paymentResponse {
+	t.Helper()
+
+	body := map[string]any{
+		"paymentIntentId":   paymentIntentID,
+		"saleId":            saleID,
+		"provider":          "integration_test",
+		"status":            status,
+		"amount":            amount,
+		"occurredAt":        time.Now().UTC(),
+		"providerReference": "provider-" + uuid.NewString(),
+	}
+
+	payload, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal payment webhook body: %v", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, apiBaseURL()+"/webhooks/payments", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("create payment webhook request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Webhook-Signature", signWebhookPayload(payload, paymentWebhookSecret))
+
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("perform payment webhook request: %v", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusAccepted {
+		raw, _ := io.ReadAll(response.Body)
+		t.Fatalf("expected payment webhook status %d, got %d: %s", http.StatusAccepted, response.StatusCode, string(raw))
+	}
+
+	var decoded paymentResponse
+	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
+		t.Fatalf("decode payment webhook response: %v", err)
+	}
+	return decoded
+}
+
 func checkInTicket(t *testing.T, ticketCode string, expectedStatus int) checkInResponse {
 	t.Helper()
 
@@ -218,6 +297,27 @@ func publishSaleCompleted(t *testing.T, saleID string) {
 	}
 
 	doJSON(t, http.MethodPost, rabbitBaseURL()+"/api/exchanges/%2F/sales.exchange/publish", body, http.StatusOK, nil)
+}
+
+func recordEmailEvent(t *testing.T, saleID string, eventType string, expectedStatus int) {
+	t.Helper()
+
+	body := map[string]any{
+		"saleId":          saleID,
+		"eventType":       eventType,
+		"occurredAt":      time.Now().UTC(),
+		"providerEventId": uuid.NewString(),
+	}
+
+	doJSONWithHeaders(t, http.MethodPost, apiBaseURL()+"/webhooks/email-events", body, expectedStatus, nil, map[string]string{
+		"X-Webhook-Secret": emailWebhookSecret,
+	})
+}
+
+func signWebhookPayload(payload []byte, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(payload)
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func doJSON(t *testing.T, method string, url string, body any, expectedStatus int, target any) {

@@ -11,7 +11,7 @@ Cliente -> Gin API -> RabbitMQ -> Worker Go -> PostgreSQL
 
 ## Componentes
 
-- `cmd/api`: API HTTP em Gin. Valida a venda, publica `SALE_CREATED`, confirma pagamentos e grava eventos na outbox.
+- `cmd/api`: API HTTP em Gin. Valida a venda, publica `SALE_CREATED`, cria intents de pagamento, recebe webhooks assinados de pagamento e grava eventos na outbox.
 - `cmd/worker`: consumidor RabbitMQ e publicador de outbox. Processa `SALE_CREATED`, reserva ingressos, publica eventos pendentes da outbox, consome `SALE_COMPLETED`, emite tickets únicos com QR Code e envia o email ao comprador.
 - `migrations`: migrations versionadas para schema e seed local.
 - `deployments/prometheus`: configuração de scrape da API e do worker.
@@ -67,18 +67,54 @@ Resposta esperada:
 
 Depois disso, o worker consome `SALE_CREATED`, reserva os ingressos e grava a venda como `PENDING_PAYMENT`.
 
-## Pagar venda
+## Criar intencao de pagamento
 
-Use o `saleId` retornado na criação da venda. Quando o pagamento é aprovado, a API grava a venda como `COMPLETED` e registra `SALE_COMPLETED` na outbox dentro da mesma transação. O worker publica esse evento no RabbitMQ, consome a mensagem, cria um registro em `issued_tickets` para cada ingresso comprado e envia os QR Codes por email.
+Use o `saleId` retornado na criação da venda. Em vez de confirmar o pagamento direto, a API agora cria uma intencao de pagamento para o provider.
 
 ```bash
-curl -X POST http://localhost:8080/sales/generated-sale-uuid/payments \
+curl -X POST http://localhost:8080/sales/generated-sale-uuid/payment-intents \
   -H 'Content-Type: application/json' \
-  -H 'X-API-Key: dev-payment-provider-key' \
   -d '{
     "amount": 20000,
     "provider": "credit_card"
   }'
+```
+
+Resposta esperada:
+
+```json
+{
+  "id": "generated-payment-intent-uuid",
+  "saleId": "generated-sale-uuid",
+  "status": "PENDING",
+  "provider": "credit_card",
+  "amount": 20000,
+  "providerReference": "pay_generated-reference",
+  "clientSecret": "pi_generated-secret"
+}
+```
+
+## Confirmar pagamento por webhook
+
+Quando o provider confirma o pagamento, ele envia um webhook assinado. A API valida a assinatura, grava a venda como `COMPLETED` ou `FAILED` e registra `SALE_COMPLETED` ou `SALE_FAILED` na outbox dentro da mesma transação. O worker publica esse evento no RabbitMQ, consome a mensagem, cria `issued_tickets` e envia os QR Codes por email.
+
+```bash
+PAYLOAD='{
+  "paymentIntentId": "generated-payment-intent-uuid",
+  "saleId": "generated-sale-uuid",
+  "provider": "credit_card",
+  "status": "APPROVED",
+  "amount": 20000,
+  "occurredAt": "2026-05-30T19:00:00Z",
+  "providerReference": "provider-reference-123"
+}'
+
+SIGNATURE=$(printf '%s' "$PAYLOAD" | openssl dgst -sha256 -hmac 'dev-payment-webhook-secret' -binary | xxd -p -c 256)
+
+curl -X POST http://localhost:8080/webhooks/payments \
+  -H 'Content-Type: application/json' \
+  -H "X-Webhook-Signature: $SIGNATURE" \
+  -d "$PAYLOAD"
 ```
 
 Resposta esperada:
@@ -96,7 +132,7 @@ Resposta esperada:
 }
 ```
 
-Para simular falha de pagamento, envie `"status": "FAILED"`. Nesse caso, a venda vira `FAILED` e a reserva dos ingressos volta para o estoque.
+Para simular falha de pagamento, envie `"status": "FAILED"` no webhook. Nesse caso, a venda vira `FAILED` e a reserva dos ingressos volta para o estoque.
 
 Se `SMTP_HOST` não estiver configurado, o worker apenas registra no log que o envio foi ignorado. Para envio real, configure:
 
@@ -105,6 +141,13 @@ Se `SMTP_HOST` não estiver configurado, o worker apenas registra no log que o e
 - `SMTP_USERNAME`
 - `SMTP_PASSWORD`
 - `SMTP_FROM`
+- `EMAIL_PROVIDER`
+- `EMAIL_WEBHOOK_SECRET`
+- `PAYMENT_WEBHOOK_SECRET`
+- `METRICS_PROTECTED`
+- `PUBLIC_RATE_LIMIT_ENABLED`
+- `PUBLIC_RATE_LIMIT_REQUESTS_PER_SECOND`
+- `PUBLIC_RATE_LIMIT_BURST`
 - `EMAIL_RETRY_ENABLED`
 - `EMAIL_RETRY_INTERVAL`
 
@@ -143,6 +186,55 @@ EMAIL_RETRY_INTERVAL=1m
 
 O retry usa backoff exponencial, limitado a 1 hora. Depois de 5 tentativas sem sucesso, a notificacao vira `DEAD_LETTER`.
 
+## Eventos de email
+
+O sistema tambem aceita eventos de provider por webhook para acompanhar o ciclo do email depois do envio:
+
+- `DELIVERED`
+- `OPENED`
+- `CLICKED`
+- `BOUNCED`
+
+Endpoint:
+
+```bash
+curl -X POST http://localhost:8080/webhooks/email-events \
+  -H 'Content-Type: application/json' \
+  -H 'X-Webhook-Secret: dev-email-webhook-secret' \
+  -d '{
+    "saleId": "generated-sale-uuid",
+    "eventType": "OPENED",
+    "occurredAt": "2026-05-30T18:30:00Z",
+    "providerEventId": "provider-event-123"
+  }'
+```
+
+Esses eventos atualizam `email_notifications` para refletir entrega, abertura, clique ou bounce. Retentativa automatica continua sendo usada apenas para falha de envio, nao para falta de abertura.
+
+O ambiente agora fica preparado para provider externo por configuracao:
+
+```env
+EMAIL_PROVIDER=generic
+EMAIL_WEBHOOK_SECRET=dev-email-webhook-secret
+PAYMENT_WEBHOOK_SECRET=dev-payment-webhook-secret
+METRICS_PROTECTED=false
+PUBLIC_RATE_LIMIT_ENABLED=true
+PUBLIC_RATE_LIMIT_REQUESTS_PER_SECOND=5
+PUBLIC_RATE_LIMIT_BURST=10
+WORKER_METRICS_HOST=0.0.0.0
+```
+
+Primeira versao:
+
+- `generic`: payload interno simples, bom para desenvolvimento e para adaptar depois.
+
+Proximos adapters naturais:
+
+- `sendgrid`
+- `ses`
+- `mailgun`
+- `postmark`
+
 ## Autenticacao local
 
 Alguns endpoints usam API Key no header `X-API-Key`. As migrations criam chaves locais para desenvolvimento:
@@ -155,11 +247,15 @@ Alguns endpoints usam API Key no header `X-API-Key`. As migrations criam chaves 
 Permissoes iniciais:
 
 - `POST /sales`: publico.
+- `POST /sales/:saleId/payment-intents`: publico.
 - `POST /sales/:saleId/payments`: `PAYMENT_PROVIDER` ou `ADMIN`.
+- `POST /webhooks/payments`: webhook assinado por `PAYMENT_WEBHOOK_SECRET`.
 - `GET /sales-events/:salesEventId/sales`: `SUPPORT` ou `ADMIN`.
 - `GET /sales-events/:salesEventId/sales/:saleId`: `SUPPORT` ou `ADMIN`.
 - `POST /sales-events/:salesEventId/check-ins`: `CHECK_IN` ou `ADMIN`.
-- `/healthz` e `/metrics`: publicos no ambiente local.
+- `/healthz`: publico.
+- `/metrics`: publico em `development` por padrao e protegido por `ADMIN` nos ambientes mais fechados.
+- metricas do worker: use `WORKER_METRICS_HOST=127.0.0.1` fora de desenvolvimento para deixá-las apenas na rede interna da máquina/container.
 
 ## Validar entrada
 
@@ -239,6 +335,7 @@ Métricas principais:
 Logs:
 
 - Os serviços Go escrevem logs estruturados em JSON.
+- Campos sensiveis como email/recipient/segredos sao redigidos nos logs.
 - Promtail coleta logs dos containers Docker e envia para Loki.
 - Grafana tem datasources de Prometheus e Loki provisionados.
 
@@ -296,7 +393,7 @@ Rodar o fluxo de integração com Docker Compose:
 make test-integration
 ```
 
-Esse teste sobe `postgres`, `rabbitmq`, `migrate`, `api` e `worker`, aplica as migrations versionadas, cria uma venda real, aguarda a reserva assíncrona, confirma pagamento, aguarda emissão de tickets/QR Code, valida o check-in e verifica que o mesmo QR Code nao entra duas vezes. Ele também cobre falha de pagamento restaurando estoque.
+Esse teste sobe `postgres`, `rabbitmq`, `migrate`, `api` e `worker`, aplica as migrations versionadas, cria uma venda real, aguarda a reserva assíncrona, cria a intencao de pagamento, confirma o pagamento por webhook assinado, aguarda emissão de tickets/QR Code, valida o check-in e verifica que o mesmo QR Code nao entra duas vezes. Ele também cobre falha de pagamento restaurando estoque.
 
 Aplicar migrations manualmente:
 

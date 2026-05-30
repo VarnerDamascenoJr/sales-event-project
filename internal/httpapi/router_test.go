@@ -256,6 +256,36 @@ func TestCreatePaymentApprovesPendingSale(t *testing.T) {
 	}
 }
 
+func TestCreatePaymentIntentAcceptsPendingSale(t *testing.T) {
+	now := time.Date(2026, 5, 30, 15, 0, 0, 0, time.UTC)
+	router, _, _ := newTestRouter(fakeSalesStore{
+		paymentIntentResult: PaymentIntentDTO{
+			ID:                "dddddddd-dddd-dddd-dddd-dddddddddddd",
+			SaleID:            testSaleID,
+			Status:            events.PaymentPendingStatus,
+			Provider:          "credit_card",
+			Amount:            10000,
+			ProviderReference: "pay_test_123",
+			ClientSecret:      "pi_secret",
+			CreatedAt:         now,
+			UpdatedAt:         now,
+		},
+	})
+
+	response := performRequest(t, router, http.MethodPost, "/sales/"+testSaleID+"/payment-intents", map[string]any{
+		"amount":   10000,
+		"provider": "credit_card",
+	})
+
+	assertStatus(t, response, http.StatusAccepted)
+
+	var body PaymentIntentDTO
+	decodeResponse(t, response, &body)
+	if body.ID == "" || body.Status != events.PaymentPendingStatus || body.ProviderReference == "" {
+		t.Fatalf("unexpected payment intent response: %+v", body)
+	}
+}
+
 func TestCreatePaymentRejectsInvalidStatus(t *testing.T) {
 	router, _, _ := newTestRouter(fakeSalesStore{})
 
@@ -267,6 +297,120 @@ func TestCreatePaymentRejectsInvalidStatus(t *testing.T) {
 
 	assertStatus(t, response, http.StatusBadRequest)
 	assertJSONField(t, response, "error", "status must be APPROVED or FAILED")
+}
+
+func TestPaymentWebhookProcessesApprovedPayment(t *testing.T) {
+	now := time.Date(2026, 5, 30, 16, 0, 0, 0, time.UTC)
+	router, _, _ := newTestRouter(fakeSalesStore{
+		paymentWebhookResult: ProcessPaymentResult{
+			SaleID:       testSaleID,
+			SalesEventID: testSalesEventID,
+			SaleStatus:   events.SaleCompletedStatus,
+			Payment: PaymentDTO{
+				Status:      events.PaymentApprovedStatus,
+				Amount:      10000,
+				Provider:    "credit_card",
+				ProcessedAt: now,
+			},
+		},
+	})
+
+	payload := map[string]any{
+		"paymentIntentId":   "dddddddd-dddd-dddd-dddd-dddddddddddd",
+		"saleId":            testSaleID,
+		"provider":          "credit_card",
+		"status":            events.PaymentApprovedStatus,
+		"amount":            10000,
+		"occurredAt":        now,
+		"providerReference": "pay_test_123",
+	}
+	response := performSignedPaymentWebhook(t, router, payload)
+
+	assertStatus(t, response, http.StatusAccepted)
+
+	var body ProcessPaymentResult
+	decodeResponse(t, response, &body)
+	if body.SaleStatus != events.SaleCompletedStatus || body.Payment.Status != events.PaymentApprovedStatus {
+		t.Fatalf("unexpected payment webhook response: %+v", body)
+	}
+}
+
+func TestPaymentWebhookRejectsInvalidSignature(t *testing.T) {
+	router, _, _ := newTestRouter(fakeSalesStore{})
+
+	response := performRequestWithHeaders(t, router, http.MethodPost, "/webhooks/payments", map[string]any{
+		"paymentIntentId": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+		"saleId":          testSaleID,
+		"provider":        "credit_card",
+		"status":          events.PaymentApprovedStatus,
+		"amount":          10000,
+		"occurredAt":      time.Now().UTC(),
+	}, map[string]string{
+		paymentSignatureHeader: "wrong-signature",
+	})
+
+	assertStatus(t, response, http.StatusUnauthorized)
+	assertJSONField(t, response, "error", "webhook signature is invalid")
+}
+
+func TestMetricsRouteRequiresAdminWhenProtected(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := NewRouter(RouterDeps{
+		Broker:               &fakePublisher{},
+		Store:                &fakeSalesStore{},
+		AuthStore:            newFakeAuthStore(),
+		WebhookSecret:        "test-webhook-secret",
+		PaymentWebhookSecret: "test-payment-secret",
+		MetricsProtected:     true,
+	})
+
+	response := performRequest(t, router, http.MethodGet, "/metrics", nil)
+	assertStatus(t, response, http.StatusUnauthorized)
+
+	response = performRequestWithAPIKey(t, router, http.MethodGet, "/metrics", nil, "support-key")
+	assertStatus(t, response, http.StatusForbidden)
+
+	response = performRequestWithAPIKey(t, router, http.MethodGet, "/metrics", nil, "admin-key")
+	assertStatus(t, response, http.StatusOK)
+}
+
+func TestPublicRateLimiterReturnsTooManyRequests(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := NewRouter(RouterDeps{
+		Broker: &fakePublisher{},
+		Store: &fakeSalesStore{
+			salesEventExists: true,
+			ticket: TicketReadModel{
+				Name:              "General Admission",
+				Price:             10000,
+				AvailableQuantity: 10,
+			},
+		},
+		AuthStore:         newFakeAuthStore(),
+		WebhookSecret:     "test-webhook-secret",
+		MetricsProtected:  false,
+		PublicRateLimiter: NewRateLimiter(1, 1, time.Minute),
+	})
+
+	first := performRequest(t, router, http.MethodPost, "/sales", map[string]any{
+		"salesEventId":  testSalesEventID,
+		"customerId":    "customer-001",
+		"customerName":  "Ada Lovelace",
+		"customerEmail": "ada@example.com",
+		"items":         []map[string]any{{"ticketId": testTicketID, "quantity": 1, "unitPrice": 10000}},
+	})
+	assertStatus(t, first, http.StatusAccepted)
+
+	second := performRequest(t, router, http.MethodPost, "/sales", map[string]any{
+		"salesEventId":  testSalesEventID,
+		"customerId":    "customer-002",
+		"customerName":  "Grace Hopper",
+		"customerEmail": "grace@example.com",
+		"items":         []map[string]any{{"ticketId": testTicketID, "quantity": 1, "unitPrice": 10000}},
+	})
+	assertStatus(t, second, http.StatusTooManyRequests)
 }
 
 func TestCheckInTicketReturnsCreated(t *testing.T) {
@@ -346,15 +490,79 @@ func TestProtectedRoutesRejectWrongRole(t *testing.T) {
 	assertJSONField(t, response, "error", "api key role is not allowed")
 }
 
+func TestEmailWebhookRecordsOpenedEvent(t *testing.T) {
+	now := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	router, _, store := newTestRouter(fakeSalesStore{
+		emailEventResult: RecordEmailEventResult{
+			SaleID:          testSaleID,
+			Status:          "OPENED",
+			ProviderEventID: "provider-event-123",
+			RecordedAt:      now,
+		},
+	})
+
+	response := performRequestWithHeaders(t, router, http.MethodPost, "/webhooks/email-events", map[string]any{
+		"saleId":          testSaleID,
+		"eventType":       "OPENED",
+		"occurredAt":      now,
+		"providerEventId": "provider-event-123",
+	}, map[string]string{
+		webhookSecretHeader: "test-webhook-secret",
+	})
+
+	assertStatus(t, response, http.StatusAccepted)
+
+	var body RecordEmailEventResult
+	decodeResponse(t, response, &body)
+	if body.Status != "OPENED" || body.ProviderEventID != "provider-event-123" {
+		t.Fatalf("unexpected webhook response: %+v", body)
+	}
+	if store.lastEmailEventRequest.EventType != "OPENED" {
+		t.Fatalf("expected webhook request to reach store, got %+v", store.lastEmailEventRequest)
+	}
+}
+
+func TestEmailWebhookRejectsInvalidSecret(t *testing.T) {
+	router, _, _ := newTestRouter(fakeSalesStore{})
+
+	response := performRequestWithHeaders(t, router, http.MethodPost, "/webhooks/email-events", map[string]any{
+		"saleId":     testSaleID,
+		"eventType":  "OPENED",
+		"occurredAt": time.Now().UTC(),
+	}, map[string]string{
+		webhookSecretHeader: "wrong-secret",
+	})
+
+	assertStatus(t, response, http.StatusUnauthorized)
+	assertJSONField(t, response, "error", "webhook secret is invalid")
+}
+
+func TestEmailWebhookRejectsInvalidEventType(t *testing.T) {
+	router, _, _ := newTestRouter(fakeSalesStore{})
+
+	response := performRequestWithHeaders(t, router, http.MethodPost, "/webhooks/email-events", map[string]any{
+		"saleId":     testSaleID,
+		"eventType":  "UNKNOWN",
+		"occurredAt": time.Now().UTC(),
+	}, map[string]string{
+		webhookSecretHeader: "test-webhook-secret",
+	})
+
+	assertStatus(t, response, http.StatusBadRequest)
+	assertJSONField(t, response, "error", "eventType must be DELIVERED, OPENED, CLICKED, or BOUNCED")
+}
+
 func newTestRouter(store fakeSalesStore) (*gin.Engine, *fakePublisher, *fakeSalesStore) {
 	gin.SetMode(gin.TestMode)
 
 	broker := &fakePublisher{}
 	storeRef := &store
 	router := NewRouter(RouterDeps{
-		Broker:    broker,
-		Store:     storeRef,
-		AuthStore: newFakeAuthStore(),
+		Broker:               broker,
+		Store:                storeRef,
+		AuthStore:            newFakeAuthStore(),
+		WebhookSecret:        "test-webhook-secret",
+		PaymentWebhookSecret: "test-payment-secret",
 	})
 
 	return router, broker, storeRef
@@ -384,6 +592,13 @@ func performRequest(t *testing.T, router http.Handler, method string, path strin
 
 func performRequestWithAPIKey(t *testing.T, router http.Handler, method string, path string, body any, apiKey string) *httptest.ResponseRecorder {
 	t.Helper()
+	return performRequestWithHeaders(t, router, method, path, body, map[string]string{
+		apiKeyHeader: apiKey,
+	})
+}
+
+func performRequestWithHeaders(t *testing.T, router http.Handler, method string, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
 
 	var requestBody *bytes.Reader
 	if body != nil {
@@ -398,7 +613,26 @@ func performRequestWithAPIKey(t *testing.T, router http.Handler, method string, 
 
 	request := httptest.NewRequest(method, path, requestBody)
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set(apiKeyHeader, apiKey)
+	for key, value := range headers {
+		request.Header.Set(key, value)
+	}
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	return response
+}
+
+func performSignedPaymentWebhook(t *testing.T, router http.Handler, body any) *httptest.ResponseRecorder {
+	t.Helper()
+
+	payload, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal request body: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/webhooks/payments", bytes.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(paymentSignatureHeader, computeBodyHMAC(payload, "test-payment-secret"))
 
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
@@ -480,19 +714,26 @@ func (p *fakePublisher) PublishJSON(_ context.Context, routingKey string, value 
 }
 
 type fakeSalesStore struct {
-	salesEventExists   bool
-	ticket             TicketReadModel
-	ticketErr          error
-	listResponse       ListSalesResponse
-	listErr            error
-	sale               SaleDetailDTO
-	getSaleErr         error
-	paymentResult      ProcessPaymentResult
-	paymentErr         error
-	checkInResult      CheckInTicketResult
-	checkInErr         error
-	lastCheckInRequest CheckInTicketRequest
-	err                error
+	salesEventExists      bool
+	ticket                TicketReadModel
+	ticketErr             error
+	listResponse          ListSalesResponse
+	listErr               error
+	sale                  SaleDetailDTO
+	getSaleErr            error
+	paymentResult         ProcessPaymentResult
+	paymentErr            error
+	paymentIntentResult   PaymentIntentDTO
+	paymentIntentErr      error
+	paymentWebhookResult  ProcessPaymentResult
+	paymentWebhookErr     error
+	checkInResult         CheckInTicketResult
+	checkInErr            error
+	lastCheckInRequest    CheckInTicketRequest
+	emailEventResult      RecordEmailEventResult
+	emailEventErr         error
+	lastEmailEventRequest RecordEmailEventRequest
+	err                   error
 }
 
 func (s *fakeSalesStore) SalesEventExists(context.Context, string) (bool, error) {
@@ -542,6 +783,26 @@ func (s *fakeSalesStore) ProcessPayment(_ context.Context, req ProcessPaymentReq
 	return s.paymentResult, nil
 }
 
+func (s *fakeSalesStore) CreatePaymentIntent(_ context.Context, req CreatePaymentIntentStoreRequest) (PaymentIntentDTO, error) {
+	if s.paymentIntentErr != nil {
+		return PaymentIntentDTO{}, s.paymentIntentErr
+	}
+	if s.paymentIntentResult.ID == "" {
+		return PaymentIntentDTO{}, fmt.Errorf("test payment intent result was not configured for sale %s", req.SaleID)
+	}
+	return s.paymentIntentResult, nil
+}
+
+func (s *fakeSalesStore) ProcessPaymentWebhook(_ context.Context, req ProcessPaymentWebhookRequest) (ProcessPaymentResult, error) {
+	if s.paymentWebhookErr != nil {
+		return ProcessPaymentResult{}, s.paymentWebhookErr
+	}
+	if s.paymentWebhookResult.SaleID == "" {
+		return ProcessPaymentResult{}, fmt.Errorf("test payment webhook result was not configured for sale %s", req.SaleID)
+	}
+	return s.paymentWebhookResult, nil
+}
+
 func (s *fakeSalesStore) CheckInTicket(_ context.Context, req CheckInTicketRequest) (CheckInTicketResult, error) {
 	s.lastCheckInRequest = req
 	if s.checkInErr != nil {
@@ -551,4 +812,15 @@ func (s *fakeSalesStore) CheckInTicket(_ context.Context, req CheckInTicketReque
 		return CheckInTicketResult{}, fmt.Errorf("test check-in result was not configured for ticket %s", req.IssuedTicketID)
 	}
 	return s.checkInResult, nil
+}
+
+func (s *fakeSalesStore) RecordEmailEvent(_ context.Context, req RecordEmailEventRequest) (RecordEmailEventResult, error) {
+	s.lastEmailEventRequest = req
+	if s.emailEventErr != nil {
+		return RecordEmailEventResult{}, s.emailEventErr
+	}
+	if s.emailEventResult.SaleID == "" {
+		return RecordEmailEventResult{}, fmt.Errorf("test email event result was not configured for sale %s", req.SaleID)
+	}
+	return s.emailEventResult, nil
 }

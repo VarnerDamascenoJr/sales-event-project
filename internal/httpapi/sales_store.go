@@ -186,6 +186,182 @@ func (s *PostgresSalesStore) ProcessPayment(ctx context.Context, req ProcessPaym
 		_ = tx.Rollback(ctx)
 	}()
 
+	result, err := s.processPaymentTx(ctx, tx, req, paymentStatus, time.Time{})
+	if err != nil {
+		return ProcessPaymentResult{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return ProcessPaymentResult{}, err
+	}
+
+	return result, nil
+}
+
+func (s *PostgresSalesStore) CreatePaymentIntent(ctx context.Context, req CreatePaymentIntentStoreRequest) (PaymentIntentDTO, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return PaymentIntentDTO{}, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	sale, err := s.getSaleForPayment(ctx, tx, req.SaleID)
+	if err != nil {
+		return PaymentIntentDTO{}, err
+	}
+	if sale.Status == events.SaleCompletedStatus {
+		return PaymentIntentDTO{}, errSaleAlreadyPaid
+	}
+	if sale.Status != events.SalePendingPaymentStatus {
+		return PaymentIntentDTO{}, errSaleCannotBePaid
+	}
+	if req.Amount != sale.TotalAmount {
+		return PaymentIntentDTO{}, errValidation("amount does not match sale total amount")
+	}
+
+	intentID := uuid.NewString()
+	providerReference := "pay_" + uuid.NewString()
+	clientSecret := "pi_" + uuid.NewString()
+	intentStatus := events.PaymentPendingStatus
+	var createdAt time.Time
+	var updatedAt time.Time
+
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO payment_intents (id, sale_id, provider, amount, status, provider_reference, client_secret, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, NOW(), NOW())
+		ON CONFLICT (sale_id) DO UPDATE
+		SET provider = EXCLUDED.provider,
+		    amount = EXCLUDED.amount,
+		    provider_reference = EXCLUDED.provider_reference,
+		    client_secret = EXCLUDED.client_secret,
+		    status = 'PENDING',
+		    updated_at = NOW()
+		RETURNING id, sale_id, status, provider, amount, provider_reference, client_secret, created_at, updated_at
+	`, intentID, req.SaleID, req.Provider, req.Amount, providerReference, clientSecret).Scan(
+		&intentID,
+		&req.SaleID,
+		&intentStatus,
+		&req.Provider,
+		&req.Amount,
+		&providerReference,
+		&clientSecret,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		return PaymentIntentDTO{}, err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE payments
+		SET provider = $2,
+		    amount = $3,
+		    processed_at = NOW()
+		WHERE sale_id = $1
+	`, req.SaleID, req.Provider, req.Amount); err != nil {
+		return PaymentIntentDTO{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return PaymentIntentDTO{}, err
+	}
+
+	return PaymentIntentDTO{
+		ID:                intentID,
+		SaleID:            req.SaleID,
+		Status:            intentStatus,
+		Provider:          req.Provider,
+		Amount:            req.Amount,
+		ProviderReference: providerReference,
+		ClientSecret:      clientSecret,
+		CreatedAt:         createdAt,
+		UpdatedAt:         updatedAt,
+	}, nil
+}
+
+func (s *PostgresSalesStore) ProcessPaymentWebhook(ctx context.Context, req ProcessPaymentWebhookRequest) (ProcessPaymentResult, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return ProcessPaymentResult{}, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	intent, err := s.getPaymentIntent(ctx, tx, req.PaymentIntentID)
+	if err != nil {
+		return ProcessPaymentResult{}, err
+	}
+	if intent.SaleID != req.SaleID {
+		return ProcessPaymentResult{}, errValidation("paymentIntentId does not belong to this sale")
+	}
+	if req.Amount != intent.Amount {
+		return ProcessPaymentResult{}, errValidation("amount does not match payment intent amount")
+	}
+	if req.Provider != intent.Provider {
+		return ProcessPaymentResult{}, errValidation("provider does not match payment intent provider")
+	}
+
+	sale, err := s.getSaleForPayment(ctx, tx, req.SaleID)
+	if err != nil {
+		return ProcessPaymentResult{}, err
+	}
+
+	if sale.Status == events.SaleCompletedStatus && req.Status == events.PaymentApprovedStatus {
+		return ProcessPaymentResult{
+			SaleID:       sale.ID,
+			SalesEventID: sale.SalesEventID,
+			SaleStatus:   sale.Status,
+			Payment: PaymentDTO{
+				Status:      req.Status,
+				Amount:      req.Amount,
+				Provider:    req.Provider,
+				ProcessedAt: req.OccurredAt.UTC(),
+			},
+		}, nil
+	}
+	if sale.Status == events.SaleFailedStatus && req.Status == events.PaymentFailedStatus {
+		return ProcessPaymentResult{
+			SaleID:       sale.ID,
+			SalesEventID: sale.SalesEventID,
+			SaleStatus:   sale.Status,
+			Payment: PaymentDTO{
+				Status:      req.Status,
+				Amount:      req.Amount,
+				Provider:    req.Provider,
+				ProcessedAt: req.OccurredAt.UTC(),
+			},
+		}, nil
+	}
+
+	result, err := s.processPaymentTx(ctx, tx, ProcessPaymentRequest{
+		SaleID:   req.SaleID,
+		Amount:   req.Amount,
+		Provider: req.Provider,
+		Status:   req.Status,
+	}, req.Status, req.OccurredAt)
+	if err != nil {
+		return ProcessPaymentResult{}, err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE payment_intents
+		SET status = $2,
+		    provider_reference = CASE WHEN $3 = '' THEN provider_reference ELSE $3 END,
+		    updated_at = NOW()
+		WHERE id = $1
+	`, req.PaymentIntentID, webhookIntentStatus(req.Status), req.ProviderReference); err != nil {
+		return ProcessPaymentResult{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return ProcessPaymentResult{}, err
+	}
+	return result, nil
+}
+
+func (s *PostgresSalesStore) processPaymentTx(ctx context.Context, tx pgx.Tx, req ProcessPaymentRequest, paymentStatus string, occurredAt time.Time) (ProcessPaymentResult, error) {
 	sale, err := s.getSaleForPayment(ctx, tx, req.SaleID)
 	if err != nil {
 		return ProcessPaymentResult{}, err
@@ -208,17 +384,22 @@ func (s *PostgresSalesStore) ProcessPayment(ctx context.Context, req ProcessPaym
 		}
 	}
 
+	processedAt := time.Now().UTC()
+	if !occurredAt.IsZero() {
+		processedAt = occurredAt.UTC()
+	}
+
 	var payment PaymentDTO
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO payments (sale_id, status, amount, provider, processed_at)
-		VALUES ($1, $2, $3, $4, NOW())
+		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (sale_id) DO UPDATE
 		SET status = EXCLUDED.status,
 		    amount = EXCLUDED.amount,
 		    provider = EXCLUDED.provider,
-		    processed_at = NOW()
+		    processed_at = EXCLUDED.processed_at
 		RETURNING status, amount, provider, processed_at
-	`, req.SaleID, paymentStatus, req.Amount, req.Provider).Scan(
+	`, req.SaleID, paymentStatus, req.Amount, req.Provider, processedAt).Scan(
 		&payment.Status,
 		&payment.Amount,
 		&payment.Provider,
@@ -237,7 +418,7 @@ func (s *PostgresSalesStore) ProcessPayment(ctx context.Context, req ProcessPaym
 	}
 
 	eventID := uuid.NewString()
-	payload, err := paymentOutboxPayload(eventID, sale.SalesEventID, req, paymentStatus, saleStatus)
+	payload, err := paymentOutboxPayload(eventID, sale.SalesEventID, req, paymentStatus, saleStatus, processedAt)
 	if err != nil {
 		return ProcessPaymentResult{}, err
 	}
@@ -249,10 +430,6 @@ func (s *PostgresSalesStore) ProcessPayment(ctx context.Context, req ProcessPaym
 		return ProcessPaymentResult{}, err
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return ProcessPaymentResult{}, err
-	}
-
 	return ProcessPaymentResult{
 		SaleID:       req.SaleID,
 		SalesEventID: sale.SalesEventID,
@@ -261,12 +438,12 @@ func (s *PostgresSalesStore) ProcessPayment(ctx context.Context, req ProcessPaym
 	}, nil
 }
 
-func paymentOutboxPayload(eventID string, salesEventID string, req ProcessPaymentRequest, paymentStatus string, saleStatus string) ([]byte, error) {
+func paymentOutboxPayload(eventID string, salesEventID string, req ProcessPaymentRequest, paymentStatus string, saleStatus string, occurredAt time.Time) ([]byte, error) {
 	if saleStatus == events.SaleCompletedStatus {
 		return json.Marshal(events.SaleCompleted{
 			EventID:      eventID,
 			EventType:    "SALE_COMPLETED",
-			OccurredAt:   time.Now().UTC(),
+			OccurredAt:   occurredAt,
 			SaleID:       req.SaleID,
 			SalesEventID: salesEventID,
 		})
@@ -275,7 +452,7 @@ func paymentOutboxPayload(eventID string, salesEventID string, req ProcessPaymen
 	return json.Marshal(map[string]any{
 		"eventId":       eventID,
 		"eventType":     "SALE_FAILED",
-		"occurredAt":    time.Now().UTC(),
+		"occurredAt":    occurredAt,
 		"saleId":        req.SaleID,
 		"salesEventId":  salesEventID,
 		"paymentStatus": paymentStatus,
@@ -294,12 +471,14 @@ type paymentSale struct {
 	CustomerEmail  string
 	Status         string
 	TotalAmount    int
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 func (s *PostgresSalesStore) getSaleForPayment(ctx context.Context, tx pgx.Tx, saleID string) (paymentSale, error) {
 	var sale paymentSale
 	if err := tx.QueryRow(ctx, `
-		SELECT s.id, s.sales_event_id, se.name, se.starts_at, s.customer_id, c.name, c.email, s.status, s.total_amount
+		SELECT s.id, s.sales_event_id, se.name, se.starts_at, s.customer_id, c.name, c.email, s.status, s.total_amount, s.created_at, s.updated_at
 		FROM sales s
 		JOIN sales_events se ON se.id = s.sales_event_id
 		JOIN customers c ON c.id = s.customer_id
@@ -315,6 +494,8 @@ func (s *PostgresSalesStore) getSaleForPayment(ctx context.Context, tx pgx.Tx, s
 		&sale.CustomerEmail,
 		&sale.Status,
 		&sale.TotalAmount,
+		&sale.CreatedAt,
+		&sale.UpdatedAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return paymentSale{}, errSaleNotFound
@@ -322,6 +503,43 @@ func (s *PostgresSalesStore) getSaleForPayment(ctx context.Context, tx pgx.Tx, s
 		return paymentSale{}, err
 	}
 	return sale, nil
+}
+
+type paymentIntentRecord struct {
+	ID       string
+	SaleID   string
+	Provider string
+	Amount   int
+	Status   string
+}
+
+func (s *PostgresSalesStore) getPaymentIntent(ctx context.Context, tx pgx.Tx, paymentIntentID string) (paymentIntentRecord, error) {
+	var intent paymentIntentRecord
+	if err := tx.QueryRow(ctx, `
+		SELECT id, sale_id, provider, amount, status
+		FROM payment_intents
+		WHERE id = $1
+		FOR UPDATE
+	`, paymentIntentID).Scan(
+		&intent.ID,
+		&intent.SaleID,
+		&intent.Provider,
+		&intent.Amount,
+		&intent.Status,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return paymentIntentRecord{}, errPaymentIntentNotFound
+		}
+		return paymentIntentRecord{}, err
+	}
+	return intent, nil
+}
+
+func webhookIntentStatus(paymentStatus string) string {
+	if paymentStatus == events.PaymentApprovedStatus {
+		return "SUCCEEDED"
+	}
+	return "FAILED"
 }
 
 func (s *PostgresSalesStore) releaseReservedTickets(ctx context.Context, tx pgx.Tx, saleID string) error {
@@ -388,6 +606,64 @@ func (s *PostgresSalesStore) CheckInTicket(ctx context.Context, req CheckInTicke
 		return CheckInTicketResult{}, err
 	}
 	return result, nil
+}
+
+func (s *PostgresSalesStore) RecordEmailEvent(ctx context.Context, req RecordEmailEventRequest) (RecordEmailEventResult, error) {
+	commandTag, err := s.db.Exec(ctx, `
+		UPDATE email_notifications
+		SET status = CASE
+		        WHEN $2 = 'DELIVERED' THEN 'DELIVERED'
+		        WHEN $2 = 'OPENED' THEN 'OPENED'
+		        WHEN $2 = 'CLICKED' THEN 'CLICKED'
+		        WHEN $2 = 'BOUNCED' THEN 'BOUNCED'
+		        ELSE status
+		    END,
+		    delivered_at = CASE
+		        WHEN $2 = 'DELIVERED' THEN COALESCE(delivered_at, $3)
+		        ELSE delivered_at
+		    END,
+		    opened_at = CASE
+		        WHEN $2 = 'OPENED' THEN COALESCE(opened_at, $3)
+		        ELSE opened_at
+		    END,
+		    clicked_at = CASE
+		        WHEN $2 = 'CLICKED' THEN COALESCE(clicked_at, $3)
+		        ELSE clicked_at
+		    END,
+		    bounced_at = CASE
+		        WHEN $2 = 'BOUNCED' THEN COALESCE(bounced_at, $3)
+		        ELSE bounced_at
+		    END,
+		    provider_event_id = CASE
+		        WHEN $4 = '' THEN provider_event_id
+		        ELSE COALESCE(provider_event_id, $4)
+		    END,
+		    error_message = CASE
+		        WHEN $2 = 'BOUNCED' AND $5 <> '' THEN $5
+		        WHEN $2 IN ('DELIVERED', 'OPENED', 'CLICKED') THEN NULL
+		        ELSE error_message
+		    END,
+		    updated_at = NOW()
+		WHERE sale_id = $1
+	`, req.SaleID, req.EventType, req.OccurredAt.UTC(), req.ProviderEventID, req.Reason)
+	if err != nil {
+		return RecordEmailEventResult{}, err
+	}
+	if commandTag.RowsAffected() == 0 {
+		return RecordEmailEventResult{}, errSaleNotFound
+	}
+
+	status := req.EventType
+	if status == "BOUNCED" {
+		status = "BOUNCED"
+	}
+
+	return RecordEmailEventResult{
+		SaleID:          req.SaleID,
+		Status:          status,
+		ProviderEventID: req.ProviderEventID,
+		RecordedAt:      req.OccurredAt.UTC(),
+	}, nil
 }
 
 type issuedTicketForCheckIn struct {

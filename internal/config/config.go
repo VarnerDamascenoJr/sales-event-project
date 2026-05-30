@@ -11,6 +11,7 @@ type Config struct {
 	AppEnv                      string
 	APIPort                     string
 	WorkerMetricsPort           string
+	WorkerMetricsHost           string
 	DatabaseURL                 string
 	RabbitMQURL                 string
 	RabbitMQExchange            string
@@ -21,6 +22,13 @@ type Config struct {
 	SMTPUsername                string
 	SMTPPassword                string
 	SMTPFrom                    string
+	EmailProvider               string
+	EmailWebhookSecret          string
+	PaymentWebhookSecret        string
+	MetricsProtected            bool
+	PublicRateLimitEnabled      bool
+	PublicRateLimitRequests     float64
+	PublicRateLimitBurst        int
 	EmailRetryEnabled           bool
 	EmailRetryInterval          time.Duration
 	RetentionEnabled            bool
@@ -30,10 +38,12 @@ type Config struct {
 }
 
 func Load() Config {
+	appEnv := getEnv("APP_ENV", "development")
 	return Config{
-		AppEnv:                      getEnv("APP_ENV", "development"),
+		AppEnv:                      appEnv,
 		APIPort:                     getEnv("API_PORT", "8080"),
 		WorkerMetricsPort:           getEnv("WORKER_METRICS_PORT", "9091"),
+		WorkerMetricsHost:           getEnv("WORKER_METRICS_HOST", workerMetricsHostDefault(appEnv)),
 		DatabaseURL:                 getEnv("DATABASE_URL", "postgres://sales:sales@localhost:5432/sales_event?sslmode=disable"),
 		RabbitMQURL:                 getEnv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
 		RabbitMQExchange:            getEnv("RABBITMQ_EXCHANGE", "sales.exchange"),
@@ -44,6 +54,13 @@ func Load() Config {
 		SMTPUsername:                getEnv("SMTP_USERNAME", ""),
 		SMTPPassword:                getEnv("SMTP_PASSWORD", ""),
 		SMTPFrom:                    getEnv("SMTP_FROM", ""),
+		EmailProvider:               getEnv("EMAIL_PROVIDER", "generic"),
+		EmailWebhookSecret:          getEnv("EMAIL_WEBHOOK_SECRET", "dev-email-webhook-secret"),
+		PaymentWebhookSecret:        getEnv("PAYMENT_WEBHOOK_SECRET", "dev-payment-webhook-secret"),
+		MetricsProtected:            getBoolEnv("METRICS_PROTECTED", appEnv != "development"),
+		PublicRateLimitEnabled:      getBoolEnv("PUBLIC_RATE_LIMIT_ENABLED", true),
+		PublicRateLimitRequests:     getFloatEnv("PUBLIC_RATE_LIMIT_REQUESTS_PER_SECOND", 5),
+		PublicRateLimitBurst:        getIntEnv("PUBLIC_RATE_LIMIT_BURST", 10),
 		EmailRetryEnabled:           getBoolEnv("EMAIL_RETRY_ENABLED", true),
 		EmailRetryInterval:          getDurationEnv("EMAIL_RETRY_INTERVAL", time.Minute),
 		RetentionEnabled:            getBoolEnv("RETENTION_ENABLED", true),
@@ -76,6 +93,34 @@ func getBoolEnv(key string, fallback bool) bool {
 	return parsed
 }
 
+func getIntEnv(key string, fallback int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		slog.Warn("invalid integer env value; using fallback", "key", key, "value", value, "fallback", fallback)
+		return fallback
+	}
+	return parsed
+}
+
+func getFloatEnv(key string, fallback float64) float64 {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		slog.Warn("invalid float env value; using fallback", "key", key, "value", value, "fallback", fallback)
+		return fallback
+	}
+	return parsed
+}
+
 func getDurationEnv(key string, fallback time.Duration) time.Duration {
 	value := os.Getenv(key)
 	if value == "" {
@@ -88,4 +133,11 @@ func getDurationEnv(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return parsed
+}
+
+func workerMetricsHostDefault(appEnv string) string {
+	if appEnv == "development" {
+		return "0.0.0.0"
+	}
+	return "127.0.0.1"
 }

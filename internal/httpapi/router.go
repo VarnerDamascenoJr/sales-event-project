@@ -19,10 +19,14 @@ import (
 )
 
 type RouterDeps struct {
-	Broker    EventPublisher
-	DB        *pgxpool.Pool
-	Store     SalesStore
-	AuthStore AuthStore
+	Broker               EventPublisher
+	DB                   *pgxpool.Pool
+	Store                SalesStore
+	AuthStore            AuthStore
+	WebhookSecret        string
+	PaymentWebhookSecret string
+	MetricsProtected     bool
+	PublicRateLimiter    *RateLimiter
 }
 
 type EventPublisher interface {
@@ -34,8 +38,11 @@ type SalesStore interface {
 	GetTicketForEvent(ctx context.Context, ticketID string, salesEventID string) (TicketReadModel, error)
 	ListSales(ctx context.Context, filter listSalesFilter) (ListSalesResponse, error)
 	GetSale(ctx context.Context, salesEventID string, saleID string) (SaleDetailDTO, error)
+	CreatePaymentIntent(ctx context.Context, req CreatePaymentIntentStoreRequest) (PaymentIntentDTO, error)
 	ProcessPayment(ctx context.Context, req ProcessPaymentRequest) (ProcessPaymentResult, error)
+	ProcessPaymentWebhook(ctx context.Context, req ProcessPaymentWebhookRequest) (ProcessPaymentResult, error)
 	CheckInTicket(ctx context.Context, req CheckInTicketRequest) (CheckInTicketResult, error)
+	RecordEmailEvent(ctx context.Context, req RecordEmailEventRequest) (RecordEmailEventResult, error)
 }
 
 type TicketReadModel struct {
@@ -65,8 +72,37 @@ type CreatePaymentRequest struct {
 	Status   string `json:"status"`
 }
 
+type CreatePaymentIntentRequest struct {
+	Amount   int    `json:"amount"`
+	Provider string `json:"provider"`
+}
+
 type CreateCheckInRequest struct {
 	TicketCode string `json:"ticketCode"`
+}
+
+type CreateEmailEventRequest struct {
+	SaleID          string    `json:"saleId"`
+	EventType       string    `json:"eventType"`
+	OccurredAt      time.Time `json:"occurredAt"`
+	ProviderEventID string    `json:"providerEventId"`
+	Reason          string    `json:"reason"`
+}
+
+type CreatePaymentWebhookRequest struct {
+	PaymentIntentID   string    `json:"paymentIntentId"`
+	SaleID            string    `json:"saleId"`
+	Provider          string    `json:"provider"`
+	Status            string    `json:"status"`
+	Amount            int       `json:"amount"`
+	OccurredAt        time.Time `json:"occurredAt"`
+	ProviderReference string    `json:"providerReference"`
+}
+
+type CreatePaymentIntentStoreRequest struct {
+	SaleID   string
+	Amount   int
+	Provider string
 }
 
 type ProcessPaymentRequest struct {
@@ -76,10 +112,28 @@ type ProcessPaymentRequest struct {
 	Status   string
 }
 
+type ProcessPaymentWebhookRequest struct {
+	PaymentIntentID   string
+	SaleID            string
+	Provider          string
+	Status            string
+	Amount            int
+	OccurredAt        time.Time
+	ProviderReference string
+}
+
 type CheckInTicketRequest struct {
 	SalesEventID   string
 	IssuedTicketID string
 	TicketCode     string
+}
+
+type RecordEmailEventRequest struct {
+	SaleID          string
+	EventType       string
+	OccurredAt      time.Time
+	ProviderEventID string
+	Reason          string
 }
 
 type ProcessPaymentResult struct {
@@ -99,6 +153,13 @@ type CheckInTicketResult struct {
 	CustomerID     string    `json:"customerId"`
 	CustomerName   string    `json:"customerName"`
 	CheckedInAt    time.Time `json:"checkedInAt"`
+}
+
+type RecordEmailEventResult struct {
+	SaleID          string    `json:"saleId"`
+	Status          string    `json:"status"`
+	ProviderEventID string    `json:"providerEventId"`
+	RecordedAt      time.Time `json:"recordedAt"`
 }
 
 type ListSalesResponse struct {
@@ -143,6 +204,18 @@ type PaymentDTO struct {
 	ProcessedAt time.Time `json:"processedAt"`
 }
 
+type PaymentIntentDTO struct {
+	ID                string    `json:"id"`
+	SaleID            string    `json:"saleId"`
+	Status            string    `json:"status"`
+	Provider          string    `json:"provider"`
+	Amount            int       `json:"amount"`
+	ProviderReference string    `json:"providerReference"`
+	ClientSecret      string    `json:"clientSecret"`
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
+}
+
 type SaleItemReadDTO struct {
 	TicketID   string    `json:"ticketId"`
 	TicketName string    `json:"ticketName"`
@@ -166,7 +239,106 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
+	metricsHandler := gin.WrapH(promhttp.Handler())
+	if deps.MetricsProtected {
+		router.GET("/metrics", requireRoles(deps.AuthStore, RoleAdmin), metricsHandler)
+	} else {
+		router.GET("/metrics", metricsHandler)
+	}
+
+	router.POST("/webhooks/email-events", requireWebhookSecret(deps.WebhookSecret), func(c *gin.Context) {
+		var req CreateEmailEventRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		recordReq := RecordEmailEventRequest{
+			SaleID:          req.SaleID,
+			EventType:       req.EventType,
+			OccurredAt:      req.OccurredAt,
+			ProviderEventID: req.ProviderEventID,
+			Reason:          req.Reason,
+		}
+		if err := validateEmailEventRequest(recordReq); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		result, err := deps.Store.RecordEmailEvent(c.Request.Context(), recordReq)
+		if err != nil {
+			status := http.StatusBadRequest
+			switch {
+			case errors.Is(err, errSaleNotFound):
+				status = http.StatusNotFound
+			default:
+				var validationErr errValidation
+				if !errors.As(err, &validationErr) {
+					status = http.StatusInternalServerError
+				}
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
+		}
+
+		slog.Info("email event recorded",
+			"sale_id", result.SaleID,
+			"status", result.Status,
+			"provider_event_id", result.ProviderEventID,
+		)
+		c.JSON(http.StatusAccepted, result)
+	})
+
+	router.POST("/webhooks/payments", requireBodyHMACSignature(deps.PaymentWebhookSecret, paymentSignatureHeader), func(c *gin.Context) {
+		var req CreatePaymentWebhookRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		paymentReq := ProcessPaymentWebhookRequest{
+			PaymentIntentID:   req.PaymentIntentID,
+			SaleID:            req.SaleID,
+			Provider:          req.Provider,
+			Status:            req.Status,
+			Amount:            req.Amount,
+			OccurredAt:        req.OccurredAt,
+			ProviderReference: req.ProviderReference,
+		}
+		if err := validatePaymentWebhookRequest(paymentReq); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		result, err := deps.Store.ProcessPaymentWebhook(c.Request.Context(), paymentReq)
+		if err != nil {
+			status := http.StatusBadRequest
+			switch {
+			case errors.Is(err, errSaleNotFound), errors.Is(err, errPaymentIntentNotFound):
+				status = http.StatusNotFound
+			case errors.Is(err, errSaleAlreadyPaid), errors.Is(err, errSaleCannotBePaid):
+				status = http.StatusConflict
+			default:
+				var validationErr errValidation
+				if !errors.As(err, &validationErr) {
+					status = http.StatusInternalServerError
+				}
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
+		}
+
+		metrics.PaymentsProcessedTotal.WithLabelValues(result.Payment.Status, result.Payment.Provider).Inc()
+		slog.Info("payment webhook processed",
+			"sale_id", result.SaleID,
+			"sales_event_id", result.SalesEventID,
+			"payment_status", result.Payment.Status,
+			"sale_status", result.SaleStatus,
+			"provider", result.Payment.Provider,
+			"amount", result.Payment.Amount,
+		)
+		c.JSON(http.StatusAccepted, result)
+	})
 
 	router.GET("/sales-events/:salesEventId/sales", requireRoles(deps.AuthStore, RoleSupport, RoleAdmin), func(c *gin.Context) {
 		page, pageSize, err := parsePagination(c)
@@ -216,7 +388,20 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		c.JSON(http.StatusOK, sale)
 	})
 
-	router.POST("/sales", func(c *gin.Context) {
+	publicRateLimited := func(handler gin.HandlerFunc) gin.HandlerFunc {
+		if deps.PublicRateLimiter == nil {
+			return handler
+		}
+		return func(c *gin.Context) {
+			deps.PublicRateLimiter.Middleware()(c)
+			if c.IsAborted() {
+				return
+			}
+			handler(c)
+		}
+	}
+
+	router.POST("/sales", publicRateLimited(func(c *gin.Context) {
 		var req CreateSaleRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -264,7 +449,52 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			"saleId": saleID,
 			"status": events.SaleProcessingStatus,
 		})
-	})
+	}))
+
+	router.POST("/sales/:saleId/payment-intents", publicRateLimited(func(c *gin.Context) {
+		var req CreatePaymentIntentRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		intentReq := CreatePaymentIntentStoreRequest{
+			SaleID:   c.Param("saleId"),
+			Amount:   req.Amount,
+			Provider: req.Provider,
+		}
+		if err := validateCreatePaymentIntentRequest(intentReq); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		intent, err := deps.Store.CreatePaymentIntent(c.Request.Context(), intentReq)
+		if err != nil {
+			status := http.StatusBadRequest
+			switch {
+			case errors.Is(err, errSaleNotFound):
+				status = http.StatusNotFound
+			case errors.Is(err, errSaleAlreadyPaid), errors.Is(err, errSaleCannotBePaid):
+				status = http.StatusConflict
+			default:
+				var validationErr errValidation
+				if !errors.As(err, &validationErr) {
+					status = http.StatusInternalServerError
+				}
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
+		}
+
+		slog.Info("payment intent created",
+			"sale_id", intent.SaleID,
+			"payment_intent_id", intent.ID,
+			"provider", intent.Provider,
+			"amount", intent.Amount,
+			"status", intent.Status,
+		)
+		c.JSON(http.StatusAccepted, intent)
+	}))
 
 	router.POST("/sales/:saleId/payments", requireRoles(deps.AuthStore, RolePaymentProvider, RoleAdmin), func(c *gin.Context) {
 		var req CreatePaymentRequest
@@ -495,6 +725,46 @@ func validatePaymentRequest(req ProcessPaymentRequest) error {
 	return nil
 }
 
+func validateCreatePaymentIntentRequest(req CreatePaymentIntentStoreRequest) error {
+	if _, err := uuid.Parse(req.SaleID); err != nil {
+		return errValidation("saleId must be a valid UUID")
+	}
+	if req.Amount <= 0 {
+		return errValidation("amount must be greater than zero")
+	}
+	if req.Amount > events.MaxMoneyAmountInCents {
+		return errValidation(fmt.Sprintf("amount is too high; maximum is %d", events.MaxMoneyAmountInCents))
+	}
+	if req.Provider == "" {
+		return errValidation("provider is required")
+	}
+	if len(req.Provider) > events.MaxTextLength {
+		return errValidation("provider is too long; maximum length is 50 characters")
+	}
+	return nil
+}
+
+func validatePaymentWebhookRequest(req ProcessPaymentWebhookRequest) error {
+	if _, err := uuid.Parse(req.PaymentIntentID); err != nil {
+		return errValidation("paymentIntentId must be a valid UUID")
+	}
+	if err := validatePaymentRequest(ProcessPaymentRequest{
+		SaleID:   req.SaleID,
+		Amount:   req.Amount,
+		Provider: req.Provider,
+		Status:   req.Status,
+	}); err != nil {
+		return err
+	}
+	if req.OccurredAt.IsZero() {
+		return errValidation("occurredAt is required")
+	}
+	if len(req.ProviderReference) > 100 {
+		return errValidation("providerReference is too long; maximum length is 100 characters")
+	}
+	return nil
+}
+
 func validateCheckInRequest(req *CheckInTicketRequest) error {
 	if err := validateSalesEventID(req.SalesEventID); err != nil {
 		return err
@@ -515,6 +785,27 @@ func validateCheckInRequest(req *CheckInTicketRequest) error {
 		return errValidation("ticketCode must contain a valid issued ticket id")
 	}
 	req.IssuedTicketID = issuedTicketID
+	return nil
+}
+
+func validateEmailEventRequest(req RecordEmailEventRequest) error {
+	if _, err := uuid.Parse(req.SaleID); err != nil {
+		return errValidation("saleId must be a valid UUID")
+	}
+	switch req.EventType {
+	case "DELIVERED", "OPENED", "CLICKED", "BOUNCED":
+	default:
+		return errValidation("eventType must be DELIVERED, OPENED, CLICKED, or BOUNCED")
+	}
+	if req.OccurredAt.IsZero() {
+		return errValidation("occurredAt is required")
+	}
+	if len(req.ProviderEventID) > 100 {
+		return errValidation("providerEventId is too long; maximum length is 100 characters")
+	}
+	if len(req.Reason) > 1000 {
+		return errValidation("reason is too long; maximum length is 1000 characters")
+	}
 	return nil
 }
 
@@ -620,6 +911,7 @@ func (e errValidation) Error() string {
 var (
 	errSalesEventNotFound      = errors.New("sales event does not exist")
 	errSaleNotFound            = errors.New("sale does not exist for this sales event")
+	errPaymentIntentNotFound   = errors.New("payment intent does not exist")
 	errTicketNotFound          = errors.New("ticket does not exist for this sales event")
 	errIssuedTicketNotFound    = errors.New("issued ticket does not exist")
 	errTicketWrongEvent        = errors.New("issued ticket does not belong to this sales event")

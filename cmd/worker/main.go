@@ -79,7 +79,7 @@ func main() {
 	outboxPublisher := outbox.NewPublisher(db, outboxBroker)
 	retentionCleaner := retention.NewCleaner(db)
 	slog.Info("worker consuming queues", "sales_created_queue", cfg.SalesCreatedQueue, "sale_completed_queue", cfg.SaleCompletedQueue)
-	startMetricsServer(cfg.WorkerMetricsPort)
+	startMetricsServer(cfg.WorkerMetricsHost, cfg.WorkerMetricsPort)
 	go outboxPublisher.Run(ctx, time.Second, 10)
 	if cfg.EmailRetryEnabled {
 		go ticketDeliveryProcessor.RunEmailRetries(ctx, cfg.EmailRetryInterval, 10)
@@ -147,7 +147,7 @@ func recordWorkerMessage(queue string, status string, start time.Time) {
 	metrics.WorkerMessageDuration.WithLabelValues(queue).Observe(time.Since(start).Seconds())
 }
 
-func startMetricsServer(port string) {
+func startMetricsServer(host string, port string) {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.GET("/healthz", func(c *gin.Context) {
@@ -156,13 +156,13 @@ func startMetricsServer(port string) {
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	server := &http.Server{
-		Addr:              ":" + port,
+		Addr:              host + ":" + port,
 		Handler:           router,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	go func() {
-		slog.Info("worker metrics listening", "port", port)
+		slog.Info("worker metrics listening", "host", host, "port", port)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("worker metrics server failed", "error", err)
 		}
