@@ -210,6 +210,7 @@ Métricas principais:
 - `sales_created_total`
 - `payments_processed_total`
 - `events_published_total`
+- `outbox_events_processed_total`
 - `worker_sales_processed_total`
 - `worker_messages_processed_total`
 - `worker_message_processing_duration_seconds`
@@ -296,7 +297,17 @@ Estrutura atual:
 - `SALE_COMPLETED`: registrado na outbox e publicado no RabbitMQ quando o pagamento é aprovado.
 - `SALE_FAILED`: registrado na outbox quando a reserva ou pagamento falha.
 
+## Outbox com retry
+
+Eventos em `outbox_events` usam estado para publicação confiável:
+
+- `PENDING`: aguardando primeira publicação.
+- `FAILED`: falhou e será tentado novamente depois de `next_attempt_at`.
+- `PUBLISHED`: publicado com sucesso.
+- `DEAD_LETTER`: excedeu o limite de tentativas.
+
+O worker tenta publicar eventos `PENDING` ou `FAILED` com `next_attempt_at <= NOW()`. Em caso de falha, incrementa `attempts`, grava `last_error` e agenda novo retry com backoff exponencial, limitado a 1 hora. Depois de 5 tentativas, o evento vira `DEAD_LETTER`.
+
 ## Próximos passos naturais
 
 - Separar retry de notificações com status `FAILED` em um worker próprio.
-- Criar autenticação na API.

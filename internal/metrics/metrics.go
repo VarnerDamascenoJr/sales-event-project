@@ -42,6 +42,11 @@ var (
 		Help: "Total number of application events published.",
 	}, []string{"routing_key", "status"})
 
+	OutboxEventsProcessedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "outbox_events_processed_total",
+		Help: "Total number of outbox events processed by the publisher.",
+	}, []string{"event_type", "status"})
+
 	PaymentsProcessedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "payments_processed_total",
 		Help: "Total number of payments processed by the API.",
