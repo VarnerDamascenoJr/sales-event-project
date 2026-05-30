@@ -21,6 +21,8 @@ type Config struct {
 	SMTPUsername                string
 	SMTPPassword                string
 	SMTPFrom                    string
+	EmailRetryEnabled           bool
+	EmailRetryInterval          time.Duration
 	RetentionEnabled            bool
 	RetentionInterval           time.Duration
 	RetentionPublishedOutboxAge time.Duration
@@ -42,6 +44,8 @@ func Load() Config {
 		SMTPUsername:                getEnv("SMTP_USERNAME", ""),
 		SMTPPassword:                getEnv("SMTP_PASSWORD", ""),
 		SMTPFrom:                    getEnv("SMTP_FROM", ""),
+		EmailRetryEnabled:           getBoolEnv("EMAIL_RETRY_ENABLED", true),
+		EmailRetryInterval:          getDurationEnv("EMAIL_RETRY_INTERVAL", time.Minute),
 		RetentionEnabled:            getBoolEnv("RETENTION_ENABLED", true),
 		RetentionInterval:           getDurationEnv("RETENTION_INTERVAL", 24*time.Hour),
 		RetentionPublishedOutboxAge: getDurationEnv("RETENTION_PUBLISHED_OUTBOX_MAX_AGE", 30*24*time.Hour),

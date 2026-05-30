@@ -105,6 +105,8 @@ Se `SMTP_HOST` não estiver configurado, o worker apenas registra no log que o e
 - `SMTP_USERNAME`
 - `SMTP_PASSWORD`
 - `SMTP_FROM`
+- `EMAIL_RETRY_ENABLED`
+- `EMAIL_RETRY_INTERVAL`
 
 ## Retencao de dados temporarios
 
@@ -123,6 +125,23 @@ RETENTION_SENT_EMAIL_MAX_AGE=2160h
 ```
 
 Vendas, pagamentos, tickets emitidos e check-ins nao sao apagados por essa rotina, porque fazem parte do historico comercial e de auditoria do evento.
+
+## Retry de email
+
+Quando o envio do ticket por email falha, o worker registra o erro em `email_notifications` e agenda novas tentativas automaticamente.
+
+- `FAILED`: falhou e entrara em retry depois de `next_retry_at`.
+- `DEAD_LETTER`: excedeu o limite de tentativas.
+- `SENT`: envio concluido.
+
+Configuracao:
+
+```env
+EMAIL_RETRY_ENABLED=true
+EMAIL_RETRY_INTERVAL=1m
+```
+
+O retry usa backoff exponencial, limitado a 1 hora. Depois de 5 tentativas sem sucesso, a notificacao vira `DEAD_LETTER`.
 
 ## Autenticacao local
 

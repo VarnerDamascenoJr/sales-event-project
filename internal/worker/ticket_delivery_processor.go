@@ -23,11 +23,42 @@ type TicketDeliveryProcessor struct {
 	sender notification.Sender
 }
 
+const (
+	emailStatusPending    = "PENDING"
+	emailStatusSent       = "SENT"
+	emailStatusFailed     = "FAILED"
+	emailStatusDeadLetter = "DEAD_LETTER"
+	maxEmailRetryAttempts = 5
+)
+
 func NewTicketDeliveryProcessor(db *pgxpool.Pool, sender notification.Sender) *TicketDeliveryProcessor {
 	if sender == nil {
 		sender = notification.LogSender{}
 	}
 	return &TicketDeliveryProcessor{db: db, sender: sender}
+}
+
+func (p *TicketDeliveryProcessor) RunEmailRetries(ctx context.Context, interval time.Duration, batchSize int) {
+	if interval <= 0 {
+		slog.Warn("email retry worker disabled because interval is not positive", "interval", interval)
+		return
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		if err := p.RetryFailedEmails(ctx, batchSize); err != nil {
+			slog.Error("email retry batch failed", "error", err)
+		}
+
+		select {
+		case <-ctx.Done():
+			slog.Info("email retry worker stopped")
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func (p *TicketDeliveryProcessor) Handle(ctx context.Context, delivery amqp091.Delivery) error {
@@ -113,6 +144,7 @@ func (p *TicketDeliveryProcessor) prepareTicketEmail(ctx context.Context, saleID
 		        WHEN email_notifications.status = 'SENT' THEN email_notifications.status
 		        ELSE 'PENDING'
 		    END,
+		    next_retry_at = NOW(),
 		    error_message = NULL,
 		    updated_at = NOW()
 	`, sale.ID, sale.CustomerEmail); err != nil {
@@ -144,7 +176,7 @@ func (p *TicketDeliveryProcessor) ticketEmailAlreadySent(ctx context.Context, tx
 		}
 		return false, err
 	}
-	return status == "SENT", nil
+	return status == emailStatusSent, nil
 }
 
 type completedSale struct {
@@ -244,12 +276,13 @@ type completedSaleItem struct {
 func (p *TicketDeliveryProcessor) markTicketEmailSent(ctx context.Context, saleID string) error {
 	_, err := p.db.Exec(ctx, `
 		UPDATE email_notifications
-		SET status = 'SENT',
+		SET status = $2,
 		    error_message = NULL,
 		    sent_at = NOW(),
+		    next_retry_at = NOW(),
 		    updated_at = NOW()
 		WHERE sale_id = $1
-	`, saleID)
+	`, saleID, emailStatusSent)
 	if err != nil {
 		return err
 	}
@@ -263,14 +296,230 @@ func (p *TicketDeliveryProcessor) markTicketEmailSent(ctx context.Context, saleI
 }
 
 func (p *TicketDeliveryProcessor) markTicketEmailFailed(ctx context.Context, saleID string, sendErr error) error {
+	nextAttempts, status, nextRetryAt := emailRetryState(1)
+
 	_, err := p.db.Exec(ctx, `
 		UPDATE email_notifications
-		SET status = 'FAILED',
-		    error_message = $2,
+		SET status = $2,
+		    attempts = attempts + 1,
+		    error_message = $3,
+		    next_retry_at = $4,
 		    updated_at = NOW()
 		WHERE sale_id = $1
-	`, saleID, sendErr.Error())
+	`, saleID, status, trimEmailError(sendErr.Error()), nextRetryAt)
+	if err == nil && status == emailStatusDeadLetter {
+		slog.Warn("email notification moved to dead letter", "sale_id", saleID, "attempts", nextAttempts)
+	}
 	return err
+}
+
+func (p *TicketDeliveryProcessor) RetryFailedEmails(ctx context.Context, batchSize int) error {
+	tx, err := p.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	rows, err := tx.Query(ctx, `
+		SELECT sale_id, attempts
+		FROM email_notifications
+		WHERE status = $1
+		  AND next_retry_at <= NOW()
+		  AND attempts < $2
+		ORDER BY updated_at ASC
+		LIMIT $3
+		FOR UPDATE SKIP LOCKED
+	`, emailStatusFailed, maxEmailRetryAttempts, batchSize)
+	if err != nil {
+		return err
+	}
+
+	pending := make([]pendingEmailRetry, 0, batchSize)
+	for rows.Next() {
+		var retry pendingEmailRetry
+		if err := rows.Scan(&retry.SaleID, &retry.Attempts); err != nil {
+			rows.Close()
+			return err
+		}
+		pending = append(pending, retry)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	for _, retry := range pending {
+		email, err := p.loadRetryTicketEmail(ctx, tx, retry.SaleID)
+		if err != nil {
+			if markErr := p.markRetryFailed(ctx, tx, retry, err.Error()); markErr != nil {
+				return markErr
+			}
+			metrics.TicketDeliveryTotal.WithLabelValues("retry_failed").Inc()
+			continue
+		}
+
+		if err := p.sender.SendTickets(ctx, *email); err != nil {
+			slog.Error("retry ticket email failed", "sale_id", retry.SaleID, "recipient", email.To, "attempts", retry.Attempts+1, "error", err)
+			if markErr := p.markRetryFailed(ctx, tx, retry, err.Error()); markErr != nil {
+				return markErr
+			}
+			metrics.TicketDeliveryTotal.WithLabelValues("retry_failed").Inc()
+			continue
+		}
+
+		if err := markTicketEmailSentTx(ctx, tx, retry.SaleID); err != nil {
+			return err
+		}
+		metrics.TicketDeliveryTotal.WithLabelValues("retry_sent").Inc()
+		slog.Info("retry ticket email delivered", "sale_id", retry.SaleID, "recipient", email.To)
+	}
+
+	return tx.Commit(ctx)
+}
+
+type retryTicketEmail struct {
+	To             string
+	CustomerName   string
+	SalesEventName string
+	StartsAt       time.Time
+	Tickets        []notification.IssuedTicket
+}
+
+type pendingEmailRetry struct {
+	SaleID   string
+	Attempts int
+}
+
+func (p *TicketDeliveryProcessor) loadRetryTicketEmail(ctx context.Context, tx pgx.Tx, saleID string) (*notification.TicketEmail, error) {
+	var email retryTicketEmail
+	if err := tx.QueryRow(ctx, `
+		SELECT c.email, c.name, se.name, se.starts_at
+		FROM sales s
+		JOIN sales_events se ON se.id = s.sales_event_id
+		JOIN customers c ON c.id = s.customer_id
+		WHERE s.id = $1
+		  AND s.status = $2
+	`, saleID, events.SaleCompletedStatus).Scan(
+		&email.To,
+		&email.CustomerName,
+		&email.SalesEventName,
+		&email.StartsAt,
+	); err != nil {
+		return nil, err
+	}
+
+	rows, err := tx.Query(ctx, `
+		SELECT it.id, t.name, it.qr_code_payload
+		FROM issued_tickets it
+		JOIN tickets t ON t.id = it.ticket_id
+		WHERE it.sale_id = $1
+		ORDER BY it.sequence ASC
+	`, saleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	email.Tickets = make([]notification.IssuedTicket, 0)
+	for rows.Next() {
+		var ticket notification.IssuedTicket
+		if err := rows.Scan(&ticket.ID, &ticket.TicketName, &ticket.QRPayload); err != nil {
+			return nil, err
+		}
+		qrCodePNG, err := qrcode.Encode(ticket.QRPayload, qrcode.Medium, 256)
+		if err != nil {
+			return nil, err
+		}
+		ticket.QRCodePNG = qrCodePNG
+		email.Tickets = append(email.Tickets, ticket)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(email.Tickets) == 0 {
+		return nil, errors.New("sale has no issued tickets available for email retry")
+	}
+
+	return &notification.TicketEmail{
+		To:             email.To,
+		CustomerName:   email.CustomerName,
+		SalesEventName: email.SalesEventName,
+		StartsAt:       email.StartsAt,
+		Tickets:        email.Tickets,
+	}, nil
+}
+
+func (p *TicketDeliveryProcessor) markRetryFailed(ctx context.Context, tx pgx.Tx, retry pendingEmailRetry, reason string) error {
+	nextAttempts, status, nextRetryAt := emailRetryState(retry.Attempts + 1)
+
+	_, err := tx.Exec(ctx, `
+		UPDATE email_notifications
+		SET status = $2,
+		    attempts = attempts + 1,
+		    error_message = $3,
+		    next_retry_at = $4,
+		    updated_at = NOW()
+		WHERE sale_id = $1
+	`, retry.SaleID, status, trimEmailError(reason), nextRetryAt)
+	if err == nil && status == emailStatusDeadLetter {
+		slog.Warn("email notification moved to dead letter", "sale_id", retry.SaleID, "attempts", nextAttempts)
+	}
+	return err
+}
+
+func markTicketEmailSentTx(ctx context.Context, tx pgx.Tx, saleID string) error {
+	if _, err := tx.Exec(ctx, `
+		UPDATE email_notifications
+		SET status = $2,
+		    error_message = NULL,
+		    sent_at = NOW(),
+		    next_retry_at = NOW(),
+		    updated_at = NOW()
+		WHERE sale_id = $1
+	`, saleID, emailStatusSent); err != nil {
+		return err
+	}
+
+	_, err := tx.Exec(ctx, `
+		UPDATE issued_tickets
+		SET emailed_at = NOW()
+		WHERE sale_id = $1
+	`, saleID)
+	return err
+}
+
+func emailRetryState(attempts int) (int, string, time.Time) {
+	status := emailStatusFailed
+	if attempts >= maxEmailRetryAttempts {
+		status = emailStatusDeadLetter
+	}
+	return attempts, status, time.Now().UTC().Add(emailRetryBackoff(attempts))
+}
+
+func emailRetryBackoff(attempts int) time.Duration {
+	if attempts <= 0 {
+		return time.Minute
+	}
+
+	backoff := time.Minute
+	for i := 1; i < attempts; i++ {
+		backoff *= 2
+		if backoff >= time.Hour {
+			return time.Hour
+		}
+	}
+	return backoff
+}
+
+func trimEmailError(value string) string {
+	const maxLength = 2000
+	if len(value) <= maxLength {
+		return value
+	}
+	return value[:maxLength]
 }
 
 func deterministicIssuedTicketID(saleID string, ticketID string, sequence int) string {

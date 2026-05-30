@@ -81,6 +81,9 @@ func main() {
 	slog.Info("worker consuming queues", "sales_created_queue", cfg.SalesCreatedQueue, "sale_completed_queue", cfg.SaleCompletedQueue)
 	startMetricsServer(cfg.WorkerMetricsPort)
 	go outboxPublisher.Run(ctx, time.Second, 10)
+	if cfg.EmailRetryEnabled {
+		go ticketDeliveryProcessor.RunEmailRetries(ctx, cfg.EmailRetryInterval, 10)
+	}
 	if cfg.RetentionEnabled {
 		go retentionCleaner.Run(ctx, cfg.RetentionInterval, retention.Policy{
 			PublishedOutboxMaxAge: cfg.RetentionPublishedOutboxAge,
