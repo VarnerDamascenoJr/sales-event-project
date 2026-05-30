@@ -103,6 +103,24 @@ Se `SMTP_HOST` não estiver configurado, o worker apenas registra no log que o e
 - `SMTP_PASSWORD`
 - `SMTP_FROM`
 
+## Retencao de dados temporarios
+
+O worker tambem executa uma limpeza periodica para reduzir dados operacionais que nao precisam ficar no banco para sempre:
+
+- `outbox_events` publicados ha mais de `RETENTION_PUBLISHED_OUTBOX_MAX_AGE`.
+- `email_notifications` com status `SENT` ha mais de `RETENTION_SENT_EMAIL_MAX_AGE`.
+
+Valores padrao:
+
+```env
+RETENTION_ENABLED=true
+RETENTION_INTERVAL=24h
+RETENTION_PUBLISHED_OUTBOX_MAX_AGE=720h
+RETENTION_SENT_EMAIL_MAX_AGE=2160h
+```
+
+Vendas, pagamentos, tickets emitidos e check-ins nao sao apagados por essa rotina, porque fazem parte do historico comercial e de auditoria do evento.
+
 ## Validar entrada
 
 Depois que o ticket é emitido, o QR Code contém um payload no formato `issued_ticket:{issuedTicketId}`. Use esse valor no check-in do evento:

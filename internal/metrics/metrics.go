@@ -67,6 +67,11 @@ var (
 		Name: "issued_tickets_total",
 		Help: "Total number of issued tickets generated.",
 	})
+
+	RetentionDeletedRowsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "retention_deleted_rows_total",
+		Help: "Total number of rows deleted by retention cleanup.",
+	}, []string{"table"})
 )
 
 func GinMiddleware() gin.HandlerFunc {

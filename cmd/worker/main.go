@@ -20,6 +20,7 @@ import (
 	"github.com/varner/sales-event-project/internal/notification"
 	"github.com/varner/sales-event-project/internal/observability"
 	"github.com/varner/sales-event-project/internal/outbox"
+	"github.com/varner/sales-event-project/internal/retention"
 	"github.com/varner/sales-event-project/internal/worker"
 )
 
@@ -76,9 +77,16 @@ func main() {
 		From:     cfg.SMTPFrom,
 	}))
 	outboxPublisher := outbox.NewPublisher(db, outboxBroker)
+	retentionCleaner := retention.NewCleaner(db)
 	slog.Info("worker consuming queues", "sales_created_queue", cfg.SalesCreatedQueue, "sale_completed_queue", cfg.SaleCompletedQueue)
 	startMetricsServer(cfg.WorkerMetricsPort)
 	go outboxPublisher.Run(ctx, time.Second, 10)
+	if cfg.RetentionEnabled {
+		go retentionCleaner.Run(ctx, cfg.RetentionInterval, retention.Policy{
+			PublishedOutboxMaxAge: cfg.RetentionPublishedOutboxAge,
+			SentEmailMaxAge:       cfg.RetentionSentEmailMaxAge,
+		})
+	}
 
 	for {
 		select {
