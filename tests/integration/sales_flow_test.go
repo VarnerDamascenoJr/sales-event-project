@@ -30,8 +30,8 @@ const (
 	generalTicketPrice   = 10000
 	checkInAPIKey        = "dev-check-in-key"
 	paymentAPIKey        = "dev-payment-provider-key"
-	emailWebhookSecret   = "dev-email-webhook-secret"
-	paymentWebhookSecret = "dev-payment-webhook-secret"
+	emailWebhookSecret   = "change-me-email-webhook-secret"
+	paymentWebhookSecret = "change-me-payment-webhook-secret"
 )
 
 func TestApprovedPaymentIssuesTicketsAndIsIdempotent(t *testing.T) {

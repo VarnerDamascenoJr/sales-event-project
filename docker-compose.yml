@@ -53,8 +53,8 @@ services:
       RABBITMQ_EXCHANGE: sales.exchange
       SALES_CREATED_QUEUE: sales.created.queue
       SALE_COMPLETED_QUEUE: sale.completed.queue
-      EMAIL_WEBHOOK_SECRET: ${EMAIL_WEBHOOK_SECRET:-dev-email-webhook-secret}
-      PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-dev-payment-webhook-secret}
+      EMAIL_WEBHOOK_SECRET: ${EMAIL_WEBHOOK_SECRET:-change-me-email-webhook-secret}
+      PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-change-me-payment-webhook-secret}
       METRICS_PROTECTED: ${METRICS_PROTECTED:-false}
       PUBLIC_RATE_LIMIT_ENABLED: ${PUBLIC_RATE_LIMIT_ENABLED:-true}
       PUBLIC_RATE_LIMIT_REQUESTS_PER_SECOND: ${PUBLIC_RATE_LIMIT_REQUESTS_PER_SECOND:-5}
@@ -86,7 +86,7 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-}
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:-generic}
-      EMAIL_WEBHOOK_SECRET: ${EMAIL_WEBHOOK_SECRET:-dev-email-webhook-secret}
+      EMAIL_WEBHOOK_SECRET: ${EMAIL_WEBHOOK_SECRET:-change-me-email-webhook-secret}
       EMAIL_RETRY_ENABLED: ${EMAIL_RETRY_ENABLED:-true}
       EMAIL_RETRY_INTERVAL: ${EMAIL_RETRY_INTERVAL:-1m}
       RETENTION_ENABLED: ${RETENTION_ENABLED:-true}

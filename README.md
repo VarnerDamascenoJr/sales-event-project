@@ -109,7 +109,7 @@ PAYLOAD='{
   "providerReference": "provider-reference-123"
 }'
 
-SIGNATURE=$(printf '%s' "$PAYLOAD" | openssl dgst -sha256 -hmac 'dev-payment-webhook-secret' -binary | xxd -p -c 256)
+SIGNATURE=$(printf '%s' "$PAYLOAD" | openssl dgst -sha256 -hmac 'change-me-payment-webhook-secret' -binary | xxd -p -c 256)
 
 curl -X POST http://localhost:8080/webhooks/payments \
   -H 'Content-Type: application/json' \
@@ -200,7 +200,7 @@ Endpoint:
 ```bash
 curl -X POST http://localhost:8080/webhooks/email-events \
   -H 'Content-Type: application/json' \
-  -H 'X-Webhook-Secret: dev-email-webhook-secret' \
+  -H 'X-Webhook-Secret: change-me-email-webhook-secret' \
   -d '{
     "saleId": "generated-sale-uuid",
     "eventType": "OPENED",
@@ -215,8 +215,8 @@ O ambiente agora fica preparado para provider externo por configuracao:
 
 ```env
 EMAIL_PROVIDER=generic
-EMAIL_WEBHOOK_SECRET=dev-email-webhook-secret
-PAYMENT_WEBHOOK_SECRET=dev-payment-webhook-secret
+EMAIL_WEBHOOK_SECRET=change-me-email-webhook-secret
+PAYMENT_WEBHOOK_SECRET=change-me-payment-webhook-secret
 METRICS_PROTECTED=false
 PUBLIC_RATE_LIMIT_ENABLED=true
 PUBLIC_RATE_LIMIT_REQUESTS_PER_SECOND=5
