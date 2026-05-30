@@ -34,6 +34,7 @@ type SalesStore interface {
 	ListSales(ctx context.Context, filter listSalesFilter) (ListSalesResponse, error)
 	GetSale(ctx context.Context, salesEventID string, saleID string) (SaleDetailDTO, error)
 	ProcessPayment(ctx context.Context, req ProcessPaymentRequest) (ProcessPaymentResult, error)
+	CheckInTicket(ctx context.Context, req CheckInTicketRequest) (CheckInTicketResult, error)
 }
 
 type TicketReadModel struct {
@@ -63,6 +64,10 @@ type CreatePaymentRequest struct {
 	Status   string `json:"status"`
 }
 
+type CreateCheckInRequest struct {
+	TicketCode string `json:"ticketCode"`
+}
+
 type ProcessPaymentRequest struct {
 	SaleID   string
 	Amount   int
@@ -70,11 +75,29 @@ type ProcessPaymentRequest struct {
 	Status   string
 }
 
+type CheckInTicketRequest struct {
+	SalesEventID   string
+	IssuedTicketID string
+	TicketCode     string
+}
+
 type ProcessPaymentResult struct {
 	SaleID       string     `json:"saleId"`
 	SalesEventID string     `json:"salesEventId"`
 	SaleStatus   string     `json:"saleStatus"`
 	Payment      PaymentDTO `json:"payment"`
+}
+
+type CheckInTicketResult struct {
+	CheckInID      string    `json:"checkInId"`
+	IssuedTicketID string    `json:"issuedTicketId"`
+	SalesEventID   string    `json:"salesEventId"`
+	SaleID         string    `json:"saleId"`
+	TicketID       string    `json:"ticketId"`
+	TicketName     string    `json:"ticketName"`
+	CustomerID     string    `json:"customerId"`
+	CustomerName   string    `json:"customerName"`
+	CheckedInAt    time.Time `json:"checkedInAt"`
 }
 
 type ListSalesResponse struct {
@@ -288,6 +311,49 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		c.JSON(http.StatusAccepted, result)
 	})
 
+	router.POST("/sales-events/:salesEventId/check-ins", func(c *gin.Context) {
+		var req CreateCheckInRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		checkInReq := CheckInTicketRequest{
+			SalesEventID: c.Param("salesEventId"),
+			TicketCode:   req.TicketCode,
+		}
+		if err := validateCheckInRequest(&checkInReq); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		result, err := deps.Store.CheckInTicket(c.Request.Context(), checkInReq)
+		if err != nil {
+			status := http.StatusBadRequest
+			switch {
+			case errors.Is(err, errSalesEventNotFound), errors.Is(err, errIssuedTicketNotFound):
+				status = http.StatusNotFound
+			case errors.Is(err, errTicketAlreadyCheckedIn), errors.Is(err, errTicketWrongEvent), errors.Is(err, errTicketCannotBeCheckedIn):
+				status = http.StatusConflict
+			default:
+				var validationErr errValidation
+				if !errors.As(err, &validationErr) {
+					status = http.StatusInternalServerError
+				}
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
+		}
+
+		slog.Info("ticket checked in",
+			"check_in_id", result.CheckInID,
+			"issued_ticket_id", result.IssuedTicketID,
+			"sales_event_id", result.SalesEventID,
+			"sale_id", result.SaleID,
+		)
+		c.JSON(http.StatusCreated, result)
+	})
+
 	return router
 }
 
@@ -425,6 +491,29 @@ func validatePaymentRequest(req ProcessPaymentRequest) error {
 	return nil
 }
 
+func validateCheckInRequest(req *CheckInTicketRequest) error {
+	if err := validateSalesEventID(req.SalesEventID); err != nil {
+		return err
+	}
+	if req.TicketCode == "" {
+		return errValidation("ticketCode is required")
+	}
+	if len(req.TicketCode) > 255 {
+		return errValidation("ticketCode is too long; maximum length is 255 characters")
+	}
+
+	const payloadPrefix = "issued_ticket:"
+	issuedTicketID := req.TicketCode
+	if len(req.TicketCode) > len(payloadPrefix) && req.TicketCode[:len(payloadPrefix)] == payloadPrefix {
+		issuedTicketID = req.TicketCode[len(payloadPrefix):]
+	}
+	if _, err := uuid.Parse(issuedTicketID); err != nil {
+		return errValidation("ticketCode must contain a valid issued ticket id")
+	}
+	req.IssuedTicketID = issuedTicketID
+	return nil
+}
+
 func validateSaleRequest(ctx context.Context, store SalesStore, req CreateSaleRequest) error {
 	if req.SalesEventID == "" {
 		return errValidation("salesEventId is required")
@@ -525,9 +614,13 @@ func (e errValidation) Error() string {
 }
 
 var (
-	errSalesEventNotFound = errors.New("sales event does not exist")
-	errSaleNotFound       = errors.New("sale does not exist for this sales event")
-	errTicketNotFound     = errors.New("ticket does not exist for this sales event")
-	errSaleAlreadyPaid    = errors.New("sale is already paid")
-	errSaleCannotBePaid   = errors.New("sale cannot be paid in its current status")
+	errSalesEventNotFound      = errors.New("sales event does not exist")
+	errSaleNotFound            = errors.New("sale does not exist for this sales event")
+	errTicketNotFound          = errors.New("ticket does not exist for this sales event")
+	errIssuedTicketNotFound    = errors.New("issued ticket does not exist")
+	errTicketWrongEvent        = errors.New("issued ticket does not belong to this sales event")
+	errTicketAlreadyCheckedIn  = errors.New("ticket is already checked in")
+	errTicketCannotBeCheckedIn = errors.New("ticket cannot be checked in because sale is not completed")
+	errSaleAlreadyPaid         = errors.New("sale is already paid")
+	errSaleCannotBePaid        = errors.New("sale cannot be paid in its current status")
 )

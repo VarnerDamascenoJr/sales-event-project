@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/varner/sales-event-project/internal/events"
 )
@@ -339,4 +340,94 @@ func saleStatusEventName(status string) string {
 		return "SALE_COMPLETED"
 	}
 	return "SALE_FAILED"
+}
+
+func (s *PostgresSalesStore) CheckInTicket(ctx context.Context, req CheckInTicketRequest) (CheckInTicketResult, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return CheckInTicketResult{}, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	ticket, err := s.getIssuedTicketForCheckIn(ctx, tx, req.IssuedTicketID)
+	if err != nil {
+		return CheckInTicketResult{}, err
+	}
+	if ticket.SalesEventID != req.SalesEventID {
+		return CheckInTicketResult{}, errTicketWrongEvent
+	}
+	if ticket.SaleStatus != events.SaleCompletedStatus || ticket.PaymentStatus != events.PaymentApprovedStatus {
+		return CheckInTicketResult{}, errTicketCannotBeCheckedIn
+	}
+
+	result := CheckInTicketResult{
+		IssuedTicketID: ticket.IssuedTicketID,
+		SalesEventID:   ticket.SalesEventID,
+		SaleID:         ticket.SaleID,
+		TicketID:       ticket.TicketID,
+		TicketName:     ticket.TicketName,
+		CustomerID:     ticket.CustomerID,
+		CustomerName:   ticket.CustomerName,
+	}
+
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO ticket_check_ins (issued_ticket_id, sales_event_id)
+		VALUES ($1, $2)
+		RETURNING id, checked_in_at
+	`, ticket.IssuedTicketID, ticket.SalesEventID).Scan(&result.CheckInID, &result.CheckedInAt); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return CheckInTicketResult{}, errTicketAlreadyCheckedIn
+		}
+		return CheckInTicketResult{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return CheckInTicketResult{}, err
+	}
+	return result, nil
+}
+
+type issuedTicketForCheckIn struct {
+	IssuedTicketID string
+	SalesEventID   string
+	SaleID         string
+	SaleStatus     string
+	PaymentStatus  string
+	TicketID       string
+	TicketName     string
+	CustomerID     string
+	CustomerName   string
+}
+
+func (s *PostgresSalesStore) getIssuedTicketForCheckIn(ctx context.Context, tx pgx.Tx, issuedTicketID string) (issuedTicketForCheckIn, error) {
+	var ticket issuedTicketForCheckIn
+	if err := tx.QueryRow(ctx, `
+		SELECT it.id, s.sales_event_id, s.id, s.status, p.status, t.id, t.name, c.id, c.name
+		FROM issued_tickets it
+		JOIN sales s ON s.id = it.sale_id
+		JOIN payments p ON p.sale_id = s.id
+		JOIN tickets t ON t.id = it.ticket_id
+		JOIN customers c ON c.id = it.customer_id
+		WHERE it.id = $1
+		FOR UPDATE OF it
+	`, issuedTicketID).Scan(
+		&ticket.IssuedTicketID,
+		&ticket.SalesEventID,
+		&ticket.SaleID,
+		&ticket.SaleStatus,
+		&ticket.PaymentStatus,
+		&ticket.TicketID,
+		&ticket.TicketName,
+		&ticket.CustomerID,
+		&ticket.CustomerName,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return issuedTicketForCheckIn{}, errIssuedTicketNotFound
+		}
+		return issuedTicketForCheckIn{}, err
+	}
+	return ticket, nil
 }

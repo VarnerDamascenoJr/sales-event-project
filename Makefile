@@ -31,6 +31,7 @@ test:
 
 test-integration:
 	docker compose up --build -d postgres rabbitmq api worker
+	docker run --rm --network host -v "$$(pwd)/migrations":/migrations:ro postgres:16-alpine psql "postgres://sales:sales@localhost:5432/sales_event?sslmode=disable" -f /migrations/001_init.sql
 	docker run --rm --network host -v "$$(pwd)":/app -w /app golang:1.22-alpine go test -tags=integration ./tests/integration -count=1 -v
 
 test-cover:

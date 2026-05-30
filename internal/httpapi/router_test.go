@@ -269,6 +269,63 @@ func TestCreatePaymentRejectsInvalidStatus(t *testing.T) {
 	assertJSONField(t, response, "error", "status must be APPROVED or FAILED")
 }
 
+func TestCheckInTicketReturnsCreated(t *testing.T) {
+	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
+	issuedTicketID := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	router, _, store := newTestRouter(fakeSalesStore{
+		checkInResult: CheckInTicketResult{
+			CheckInID:      "cccccccc-cccc-cccc-cccc-cccccccccccc",
+			IssuedTicketID: issuedTicketID,
+			SalesEventID:   testSalesEventID,
+			SaleID:         testSaleID,
+			TicketID:       testTicketID,
+			TicketName:     "General Admission",
+			CustomerID:     "customer-001",
+			CustomerName:   "Ada Lovelace",
+			CheckedInAt:    now,
+		},
+	})
+
+	response := performRequest(t, router, http.MethodPost, "/sales-events/"+testSalesEventID+"/check-ins", map[string]any{
+		"ticketCode": "issued_ticket:" + issuedTicketID,
+	})
+
+	assertStatus(t, response, http.StatusCreated)
+
+	var body CheckInTicketResult
+	decodeResponse(t, response, &body)
+	if body.IssuedTicketID != issuedTicketID || body.CheckInID == "" {
+		t.Fatalf("unexpected check-in response: %+v", body)
+	}
+	if store.lastCheckInRequest.IssuedTicketID != issuedTicketID {
+		t.Fatalf("expected issued ticket id to be parsed from QR payload, got %+v", store.lastCheckInRequest)
+	}
+}
+
+func TestCheckInTicketRejectsInvalidTicketCode(t *testing.T) {
+	router, _, _ := newTestRouter(fakeSalesStore{})
+
+	response := performRequest(t, router, http.MethodPost, "/sales-events/"+testSalesEventID+"/check-ins", map[string]any{
+		"ticketCode": "issued_ticket:not-a-uuid",
+	})
+
+	assertStatus(t, response, http.StatusBadRequest)
+	assertJSONField(t, response, "error", "ticketCode must contain a valid issued ticket id")
+}
+
+func TestCheckInTicketRejectsDuplicate(t *testing.T) {
+	router, _, _ := newTestRouter(fakeSalesStore{
+		checkInErr: errTicketAlreadyCheckedIn,
+	})
+
+	response := performRequest(t, router, http.MethodPost, "/sales-events/"+testSalesEventID+"/check-ins", map[string]any{
+		"ticketCode": "issued_ticket:bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+	})
+
+	assertStatus(t, response, http.StatusConflict)
+	assertJSONField(t, response, "error", "ticket is already checked in")
+}
+
 func newTestRouter(store fakeSalesStore) (*gin.Engine, *fakePublisher, *fakeSalesStore) {
 	gin.SetMode(gin.TestMode)
 
@@ -356,16 +413,19 @@ func (p *fakePublisher) PublishJSON(_ context.Context, routingKey string, value 
 }
 
 type fakeSalesStore struct {
-	salesEventExists bool
-	ticket           TicketReadModel
-	ticketErr        error
-	listResponse     ListSalesResponse
-	listErr          error
-	sale             SaleDetailDTO
-	getSaleErr       error
-	paymentResult    ProcessPaymentResult
-	paymentErr       error
-	err              error
+	salesEventExists   bool
+	ticket             TicketReadModel
+	ticketErr          error
+	listResponse       ListSalesResponse
+	listErr            error
+	sale               SaleDetailDTO
+	getSaleErr         error
+	paymentResult      ProcessPaymentResult
+	paymentErr         error
+	checkInResult      CheckInTicketResult
+	checkInErr         error
+	lastCheckInRequest CheckInTicketRequest
+	err                error
 }
 
 func (s *fakeSalesStore) SalesEventExists(context.Context, string) (bool, error) {
@@ -413,4 +473,15 @@ func (s *fakeSalesStore) ProcessPayment(_ context.Context, req ProcessPaymentReq
 		return ProcessPaymentResult{}, fmt.Errorf("test payment result was not configured for sale %s", req.SaleID)
 	}
 	return s.paymentResult, nil
+}
+
+func (s *fakeSalesStore) CheckInTicket(_ context.Context, req CheckInTicketRequest) (CheckInTicketResult, error) {
+	s.lastCheckInRequest = req
+	if s.checkInErr != nil {
+		return CheckInTicketResult{}, s.checkInErr
+	}
+	if s.checkInResult.CheckInID == "" {
+		return CheckInTicketResult{}, fmt.Errorf("test check-in result was not configured for ticket %s", req.IssuedTicketID)
+	}
+	return s.checkInResult, nil
 }

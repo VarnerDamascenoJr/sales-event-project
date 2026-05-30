@@ -103,6 +103,36 @@ Se `SMTP_HOST` não estiver configurado, o worker apenas registra no log que o e
 - `SMTP_PASSWORD`
 - `SMTP_FROM`
 
+## Validar entrada
+
+Depois que o ticket é emitido, o QR Code contém um payload no formato `issued_ticket:{issuedTicketId}`. Use esse valor no check-in do evento:
+
+```bash
+curl -X POST http://localhost:8080/sales-events/11111111-1111-1111-1111-111111111111/check-ins \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "ticketCode": "issued_ticket:generated-issued-ticket-uuid"
+  }'
+```
+
+Resposta esperada:
+
+```json
+{
+  "checkInId": "generated-check-in-uuid",
+  "issuedTicketId": "generated-issued-ticket-uuid",
+  "salesEventId": "11111111-1111-1111-1111-111111111111",
+  "saleId": "generated-sale-uuid",
+  "ticketId": "22222222-2222-2222-2222-222222222222",
+  "ticketName": "General Admission",
+  "customerId": "customer-001",
+  "customerName": "Ada Lovelace",
+  "checkedInAt": "2026-05-22T12:00:00Z"
+}
+```
+
+O mesmo ticket nao pode entrar duas vezes. A tabela `ticket_check_ins` tem uma restricao unica por `issued_ticket_id`, entao leituras duplicadas do mesmo QR Code retornam conflito.
+
 ## Consultar vendas
 
 Listar vendas de um evento:
@@ -204,15 +234,13 @@ Rodar o fluxo de integração com Docker Compose:
 make test-integration
 ```
 
-Esse teste sobe `postgres`, `rabbitmq`, `api` e `worker`, cria uma venda real, aguarda a reserva assíncrona, confirma pagamento, aguarda emissão de tickets/QR Code e verifica idempotência de `SALE_COMPLETED`. Ele também cobre falha de pagamento restaurando estoque.
+Esse teste sobe `postgres`, `rabbitmq`, `api` e `worker`, reaplica o schema de forma idempotente, cria uma venda real, aguarda a reserva assíncrona, confirma pagamento, aguarda emissão de tickets/QR Code, valida o check-in e verifica que o mesmo QR Code nao entra duas vezes. Ele também cobre falha de pagamento restaurando estoque.
 
 Estrutura atual:
 
 - `internal/httpapi/router_test.go`: testa handlers Gin, validações HTTP e publicação de eventos usando fakes.
 - `internal/httpapi/sales_store.go`: isola o SQL em um store Postgres, deixando o router testável sem banco real.
 - `internal/notification`: monta e envia o email com anexos PNG de QR Code.
-
-Próximo passo natural: adicionar testes de integração para Postgres e RabbitMQ com Docker.
 
 ## Eventos iniciais
 

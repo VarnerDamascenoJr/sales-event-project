@@ -55,6 +55,13 @@ func TestApprovedPaymentIssuesTicketsAndIsIdempotent(t *testing.T) {
 	waitForIssuedTickets(t, ctx, db, saleID, 2)
 	waitForEmailStatus(t, ctx, db, saleID, "SENT")
 
+	ticketCode := issuedTicketCode(t, ctx, db, saleID)
+	checkIn := checkInTicket(t, ticketCode, http.StatusCreated)
+	if checkIn.IssuedTicketID == "" || checkIn.SaleID != saleID {
+		t.Fatalf("unexpected check-in response: %+v", checkIn)
+	}
+	checkInTicket(t, ticketCode, http.StatusConflict)
+
 	publishSaleCompleted(t, saleID)
 	time.Sleep(2 * time.Second)
 
@@ -122,6 +129,12 @@ type paymentResponse struct {
 	} `json:"payment"`
 }
 
+type checkInResponse struct {
+	CheckInID      string `json:"checkInId"`
+	IssuedTicketID string `json:"issuedTicketId"`
+	SaleID         string `json:"saleId"`
+}
+
 func createSale(t *testing.T, req salesFlowRequest) string {
 	t.Helper()
 
@@ -158,6 +171,22 @@ func paySale(t *testing.T, saleID string, amount int, status string) paymentResp
 
 	var response paymentResponse
 	doJSON(t, http.MethodPost, apiBaseURL()+"/sales/"+saleID+"/payments", body, http.StatusAccepted, &response)
+	return response
+}
+
+func checkInTicket(t *testing.T, ticketCode string, expectedStatus int) checkInResponse {
+	t.Helper()
+
+	body := map[string]any{
+		"ticketCode": ticketCode,
+	}
+
+	var response checkInResponse
+	var target any
+	if expectedStatus == http.StatusCreated {
+		target = &response
+	}
+	doJSON(t, http.MethodPost, apiBaseURL()+"/sales-events/"+salesEventID+"/check-ins", body, expectedStatus, target)
 	return response
 }
 
@@ -254,6 +283,22 @@ func issuedTicketCount(t *testing.T, ctx context.Context, db *pgxpool.Pool, sale
 		t.Fatalf("query issued tickets: %v", err)
 	}
 	return count
+}
+
+func issuedTicketCode(t *testing.T, ctx context.Context, db *pgxpool.Pool, saleID string) string {
+	t.Helper()
+
+	var payload string
+	if err := db.QueryRow(ctx, `
+		SELECT qr_code_payload
+		FROM issued_tickets
+		WHERE sale_id = $1
+		ORDER BY created_at ASC
+		LIMIT 1
+	`, saleID).Scan(&payload); err != nil {
+		t.Fatalf("query issued ticket payload: %v", err)
+	}
+	return payload
 }
 
 func waitForSaleStatus(t *testing.T, ctx context.Context, db *pgxpool.Pool, saleID string, expected string) {

@@ -112,11 +112,21 @@ CREATE TABLE IF NOT EXISTS email_notifications (
     CONSTRAINT email_notifications_recipient_email_length CHECK (char_length(recipient_email) <= 255)
 );
 
+CREATE TABLE IF NOT EXISTS ticket_check_ins (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    issued_ticket_id UUID NOT NULL REFERENCES issued_tickets(id) ON DELETE CASCADE,
+    sales_event_id UUID NOT NULL REFERENCES sales_events(id) ON DELETE CASCADE,
+    checked_in_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (issued_ticket_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_sales_status ON sales(status);
 CREATE INDEX IF NOT EXISTS idx_tickets_sales_event_id ON tickets(sales_event_id);
 CREATE INDEX IF NOT EXISTS idx_issued_tickets_sale_id ON issued_tickets(sale_id);
 CREATE INDEX IF NOT EXISTS idx_email_notifications_status ON email_notifications(status);
 CREATE INDEX IF NOT EXISTS idx_outbox_events_published_at ON outbox_events(published_at);
+CREATE INDEX IF NOT EXISTS idx_ticket_check_ins_sales_event_id ON ticket_check_ins(sales_event_id);
 
 INSERT INTO sales_events (id, name, status, starts_at)
 VALUES ('11111111-1111-1111-1111-111111111111', 'Backend Moderno Conference', 'PUBLISHED', NOW() + INTERVAL '30 days')
