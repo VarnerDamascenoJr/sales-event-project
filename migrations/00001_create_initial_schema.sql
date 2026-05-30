@@ -1,3 +1,4 @@
+-- +goose Up
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 CREATE TABLE IF NOT EXISTS customers (
@@ -128,12 +129,15 @@ CREATE INDEX IF NOT EXISTS idx_email_notifications_status ON email_notifications
 CREATE INDEX IF NOT EXISTS idx_outbox_events_published_at ON outbox_events(published_at);
 CREATE INDEX IF NOT EXISTS idx_ticket_check_ins_sales_event_id ON ticket_check_ins(sales_event_id);
 
-INSERT INTO sales_events (id, name, status, starts_at)
-VALUES ('11111111-1111-1111-1111-111111111111', 'Backend Moderno Conference', 'PUBLISHED', NOW() + INTERVAL '30 days')
-ON CONFLICT (id) DO NOTHING;
-
-INSERT INTO tickets (id, sales_event_id, name, price, available_quantity)
-VALUES
-    ('22222222-2222-2222-2222-222222222222', '11111111-1111-1111-1111-111111111111', 'General Admission', 10000, 100),
-    ('33333333-3333-3333-3333-333333333333', '11111111-1111-1111-1111-111111111111', 'VIP', 25000, 25)
-ON CONFLICT (id) DO NOTHING;
+-- +goose Down
+DROP TABLE IF EXISTS ticket_check_ins;
+DROP TABLE IF EXISTS email_notifications;
+DROP TABLE IF EXISTS outbox_events;
+DROP TABLE IF EXISTS payments;
+DROP TABLE IF EXISTS issued_tickets;
+DROP TABLE IF EXISTS sale_items;
+DROP TABLE IF EXISTS sales;
+DROP TABLE IF EXISTS tickets;
+DROP TABLE IF EXISTS sales_events;
+DROP TABLE IF EXISTS customers;
+DROP EXTENSION IF EXISTS "uuid-ossp";

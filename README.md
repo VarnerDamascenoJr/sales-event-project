@@ -13,7 +13,7 @@ Cliente -> Gin API -> RabbitMQ -> Worker Go -> PostgreSQL
 
 - `cmd/api`: API HTTP em Gin. Valida a venda, publica `SALE_CREATED`, confirma pagamentos e grava eventos na outbox.
 - `cmd/worker`: consumidor RabbitMQ e publicador de outbox. Processa `SALE_CREATED`, reserva ingressos, publica eventos pendentes da outbox, consome `SALE_COMPLETED`, emite tickets únicos com QR Code e envia o email ao comprador.
-- `migrations`: schema inicial e seed de evento/tickets para testes locais.
+- `migrations`: migrations versionadas para schema e seed local.
 - `deployments/prometheus`: configuração de scrape da API e do worker.
 - `deployments/loki` e `deployments/promtail`: coleta e armazenamento de logs dos containers.
 - `deployments/grafana`: datasources e dashboard provisionados.
@@ -23,6 +23,8 @@ Cliente -> Gin API -> RabbitMQ -> Worker Go -> PostgreSQL
 ```bash
 docker compose up --build
 ```
+
+O serviço `migrate` aplica as migrations antes da API e do worker iniciarem.
 
 Serviços principais:
 
@@ -34,7 +36,7 @@ Serviços principais:
 
 ## Criar venda
 
-O banco já sobe com um evento publicado e dois tickets.
+As migrations já criam um evento publicado e dois tickets para teste local.
 
 ```bash
 curl -X POST http://localhost:8080/sales \
@@ -252,7 +254,13 @@ Rodar o fluxo de integração com Docker Compose:
 make test-integration
 ```
 
-Esse teste sobe `postgres`, `rabbitmq`, `api` e `worker`, reaplica o schema de forma idempotente, cria uma venda real, aguarda a reserva assíncrona, confirma pagamento, aguarda emissão de tickets/QR Code, valida o check-in e verifica que o mesmo QR Code nao entra duas vezes. Ele também cobre falha de pagamento restaurando estoque.
+Esse teste sobe `postgres`, `rabbitmq`, `migrate`, `api` e `worker`, aplica as migrations versionadas, cria uma venda real, aguarda a reserva assíncrona, confirma pagamento, aguarda emissão de tickets/QR Code, valida o check-in e verifica que o mesmo QR Code nao entra duas vezes. Ele também cobre falha de pagamento restaurando estoque.
+
+Aplicar migrations manualmente:
+
+```bash
+make migrate
+```
 
 Estrutura atual:
 
@@ -269,5 +277,4 @@ Estrutura atual:
 ## Próximos passos naturais
 
 - Separar retry de notificações com status `FAILED` em um worker próprio.
-- Adicionar migrations versionadas com ferramenta dedicada.
 - Criar autenticação na API.
