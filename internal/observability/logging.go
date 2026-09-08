@@ -23,12 +23,36 @@ func ConfigureLogger(service string, environment string, telemetryHandler ...slo
 		handler = multiHandler{handlers: []slog.Handler{jsonHandler, telemetryHandler[0]}}
 	}
 	handler = redactingHandler{handler: handler}
+	handler = correlationHandler{handler: handler}
 
 	logger := slog.New(handler).With(
 		"service", service,
 		"environment", environment,
 	)
 	slog.SetDefault(logger)
+}
+
+type correlationHandler struct {
+	handler slog.Handler
+}
+
+func (h correlationHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.handler.Enabled(ctx, level)
+}
+
+func (h correlationHandler) Handle(ctx context.Context, record slog.Record) error {
+	for index := 0; index < len(LogAttrs(ctx)); index += 2 {
+		record.AddAttrs(slog.Any(LogAttrs(ctx)[index].(string), LogAttrs(ctx)[index+1]))
+	}
+	return h.handler.Handle(ctx, record)
+}
+
+func (h correlationHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return correlationHandler{handler: h.handler.WithAttrs(attrs)}
+}
+
+func (h correlationHandler) WithGroup(name string) slog.Handler {
+	return correlationHandler{handler: h.handler.WithGroup(name)}
 }
 
 type redactingHandler struct {
@@ -75,7 +99,11 @@ func redactAttr(attr slog.Attr) slog.Attr {
 	for _, groupAttr := range group {
 		redacted = append(redacted, redactAttr(groupAttr))
 	}
-	return slog.Group(attr.Key, redacted...)
+	args := make([]any, 0, len(redacted))
+	for _, attr := range redacted {
+		args = append(args, attr)
+	}
+	return slog.Group(attr.Key, args...)
 }
 
 type multiHandler struct {

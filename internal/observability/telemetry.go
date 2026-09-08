@@ -3,7 +3,6 @@ package observability
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -143,5 +142,29 @@ func (c amqpHeaderCarrier) Keys() []string {
 // StartMessageSpan creates a consumer span linked to the message producer context.
 func StartMessageSpan(ctx context.Context, delivery amqp091.Delivery, operation string) (context.Context, oteltrace.Span) {
 	parent := ExtractAMQPContext(ctx, delivery.Headers)
-	return otel.Tracer(instrumentationName).Start(parent, operation)
+	messageCtx, span := otel.Tracer(instrumentationName).Start(parent, operation)
+	return withTraceID(messageCtx), span
+}
+
+// TraceContext serializes the W3C traceparent header for durable asynchronous handoffs.
+func TraceContext(ctx context.Context) string {
+	headers := map[string]string{}
+	otel.GetTextMapPropagator().Inject(ctx, propagation.MapCarrier(headers))
+	return headers["traceparent"]
+}
+
+// ContextWithTraceContext restores a persisted W3C traceparent header.
+func ContextWithTraceContext(ctx context.Context, traceContext string) context.Context {
+	if traceContext == "" {
+		return ctx
+	}
+	return otel.GetTextMapPropagator().Extract(ctx, propagation.MapCarrier{"traceparent": traceContext})
+}
+
+func withTraceID(ctx context.Context) context.Context {
+	spanContext := oteltrace.SpanContextFromContext(ctx)
+	if !spanContext.HasTraceID() {
+		return ctx
+	}
+	return context.WithValue(ctx, traceIDContextKey{}, spanContext.TraceID().String())
 }
