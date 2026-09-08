@@ -35,6 +35,8 @@ type Config struct {
 	RetentionInterval           time.Duration
 	RetentionPublishedOutboxAge time.Duration
 	RetentionSentEmailMaxAge    time.Duration
+	OTelEnabled                 bool
+	OTelEndpoint                string
 }
 
 func Load() Config {
@@ -67,6 +69,8 @@ func Load() Config {
 		RetentionInterval:           getDurationEnv("RETENTION_INTERVAL", 24*time.Hour),
 		RetentionPublishedOutboxAge: getDurationEnv("RETENTION_PUBLISHED_OUTBOX_MAX_AGE", 30*24*time.Hour),
 		RetentionSentEmailMaxAge:    getDurationEnv("RETENTION_SENT_EMAIL_MAX_AGE", 90*24*time.Hour),
+		OTelEnabled:                 getBoolEnv("OTEL_ENABLED", false),
+		OTelEndpoint:                getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318"),
 	}
 }
 

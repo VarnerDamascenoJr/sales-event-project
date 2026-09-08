@@ -8,6 +8,9 @@ import (
 
 	"github.com/rabbitmq/amqp091-go"
 	"github.com/varner/sales-event-project/internal/metrics"
+	"github.com/varner/sales-event-project/internal/observability"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type RabbitMQ struct {
@@ -91,15 +94,21 @@ func ConnectWithRetry(ctx context.Context, url, exchange string, queues map[stri
 }
 
 func (r *RabbitMQ) PublishJSON(ctx context.Context, routingKey string, value any) error {
+	ctx, span := otel.Tracer("github.com/varner/sales-event-project/messaging").Start(ctx, "rabbitmq publish "+routingKey)
+	defer span.End()
+	span.SetAttributes(attribute.String("messaging.destination.name", r.exchange), attribute.String("messaging.rabbitmq.routing_key", routingKey))
 	body, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
 
+	headers := amqp091.Table{}
+	observability.InjectAMQPContext(ctx, headers)
 	if err := r.channel.PublishWithContext(ctx, r.exchange, routingKey, false, false, amqp091.Publishing{
 		ContentType:  "application/json",
 		DeliveryMode: amqp091.Persistent,
 		Timestamp:    time.Now().UTC(),
+		Headers:      headers,
 		Body:         body,
 	}); err != nil {
 		metrics.EventPublishedTotal.WithLabelValues(routingKey, "failed").Inc()

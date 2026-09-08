@@ -26,9 +26,20 @@ import (
 
 func main() {
 	cfg := config.Load()
-	observability.ConfigureLogger("sales-event-worker", cfg.AppEnv)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	shutdownTelemetry := func(context.Context) error { return nil }
+	if cfg.OTelEnabled {
+		var err error
+		shutdownTelemetry, err = observability.ConfigureTelemetry(ctx, "sales-event-worker", cfg.AppEnv, cfg.OTelEndpoint)
+		if err != nil {
+			slog.Error("configure telemetry failed", "error", err)
+			os.Exit(1)
+		}
+	} else {
+		observability.ConfigureLogger("sales-event-worker", cfg.AppEnv)
+	}
+	defer func() { _ = shutdownTelemetry(context.Background()) }()
 
 	db, err := database.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -102,16 +113,19 @@ func main() {
 				return
 			}
 
-			processCtx, processCancel := context.WithTimeout(ctx, 15*time.Second)
+			messageCtx, messageSpan := observability.StartMessageSpan(ctx, delivery, "rabbitmq consume sales.created")
+			processCtx, processCancel := context.WithTimeout(messageCtx, 15*time.Second)
 			start := time.Now()
 			if err := salesProcessor.Handle(processCtx, delivery); err != nil {
 				processCancel()
+				messageSpan.End()
 				slog.Error("process sale created message failed", "queue", cfg.SalesCreatedQueue, "error", err)
 				_ = delivery.Nack(false, false)
 				recordWorkerMessage(cfg.SalesCreatedQueue, "failed", start)
 				continue
 			}
 			processCancel()
+			messageSpan.End()
 
 			if err := delivery.Ack(false); err != nil {
 				slog.Error("ack message failed", "queue", cfg.SalesCreatedQueue, "error", err)
@@ -123,16 +137,19 @@ func main() {
 				return
 			}
 
-			processCtx, processCancel := context.WithTimeout(ctx, 30*time.Second)
+			messageCtx, messageSpan := observability.StartMessageSpan(ctx, delivery, "rabbitmq consume sale.completed")
+			processCtx, processCancel := context.WithTimeout(messageCtx, 30*time.Second)
 			start := time.Now()
 			if err := ticketDeliveryProcessor.Handle(processCtx, delivery); err != nil {
 				processCancel()
+				messageSpan.End()
 				slog.Error("deliver tickets failed", "queue", cfg.SaleCompletedQueue, "error", err)
 				_ = delivery.Nack(false, false)
 				recordWorkerMessage(cfg.SaleCompletedQueue, "failed", start)
 				continue
 			}
 			processCancel()
+			messageSpan.End()
 
 			if err := delivery.Ack(false); err != nil {
 				slog.Error("ack message failed", "queue", cfg.SaleCompletedQueue, "error", err)

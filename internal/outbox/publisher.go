@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/varner/sales-event-project/internal/events"
 	"github.com/varner/sales-event-project/internal/metrics"
+	"github.com/varner/sales-event-project/internal/observability"
 )
 
 const (
@@ -63,7 +64,7 @@ func (p *Publisher) PublishPending(ctx context.Context, batchSize int) error {
 	}()
 
 	rows, err := tx.Query(ctx, `
-		SELECT event_id, event_type, payload, attempts
+		SELECT event_id, event_type, payload, attempts, trace_context
 		FROM outbox_events
 		WHERE status IN ('PENDING', 'FAILED')
 		  AND published_at IS NULL
@@ -80,7 +81,7 @@ func (p *Publisher) PublishPending(ctx context.Context, batchSize int) error {
 	pending := make([]pendingEvent, 0, batchSize)
 	for rows.Next() {
 		var event pendingEvent
-		if err := rows.Scan(&event.ID, &event.Type, &event.Payload, &event.Attempts); err != nil {
+		if err := rows.Scan(&event.ID, &event.Type, &event.Payload, &event.Attempts, &event.TraceContext); err != nil {
 			rows.Close()
 			return err
 		}
@@ -103,7 +104,8 @@ func (p *Publisher) PublishPending(ctx context.Context, batchSize int) error {
 			continue
 		}
 
-		if err := p.broker.PublishJSON(ctx, routingKey, event.Payload); err != nil {
+		eventCtx := observability.ContextWithTraceContext(ctx, event.TraceContext)
+		if err := p.broker.PublishJSON(eventCtx, routingKey, event.Payload); err != nil {
 			slog.Error("outbox event publish failed", "event_id", event.ID, "event_type", event.Type, "attempts", event.Attempts+1, "error", err)
 			if markErr := markFailed(ctx, tx, event, err.Error()); markErr != nil {
 				return markErr
@@ -121,10 +123,11 @@ func (p *Publisher) PublishPending(ctx context.Context, batchSize int) error {
 }
 
 type pendingEvent struct {
-	ID       string
-	Type     string
-	Payload  json.RawMessage
-	Attempts int
+	ID           string
+	Type         string
+	Payload      json.RawMessage
+	Attempts     int
+	TraceContext string
 }
 
 func routingKeyForEventType(eventType string) (string, bool) {

@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/varner/sales-event-project/internal/events"
+	"github.com/varner/sales-event-project/internal/observability"
 )
 
 type PostgresSalesStore struct {
@@ -424,9 +425,9 @@ func (s *PostgresSalesStore) processPaymentTx(ctx context.Context, tx pgx.Tx, re
 	}
 
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO outbox_events (event_id, event_type, aggregate_id, payload)
-		VALUES ($1, $2, $3, $4)
-	`, eventID, saleStatusEventName(saleStatus), req.SaleID, payload); err != nil {
+		INSERT INTO outbox_events (event_id, event_type, aggregate_id, payload, trace_context)
+		VALUES ($1, $2, $3, $4, $5)
+	`, eventID, saleStatusEventName(saleStatus), req.SaleID, payload, observability.TraceContext(ctx)); err != nil {
 		return ProcessPaymentResult{}, err
 	}
 

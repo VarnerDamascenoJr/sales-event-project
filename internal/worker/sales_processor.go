@@ -10,6 +10,7 @@ import (
 	"github.com/rabbitmq/amqp091-go"
 	"github.com/varner/sales-event-project/internal/events"
 	"github.com/varner/sales-event-project/internal/metrics"
+	"github.com/varner/sales-event-project/internal/observability"
 )
 
 type SalesProcessor struct {
@@ -41,7 +42,7 @@ func (p *SalesProcessor) Handle(ctx context.Context, delivery amqp091.Delivery) 
 
 	metrics.WorkerSalesProcessedTotal.WithLabelValues(status).Inc()
 	metrics.WorkerProcessingDuration.Observe(time.Since(start).Seconds())
-	slog.Info("sale reservation processed",
+	slog.InfoContext(ctx, "sale reservation processed",
 		"sale_id", event.SaleID,
 		"sales_event_id", event.SalesEventID,
 		"customer_id", event.CustomerID,
@@ -141,10 +142,10 @@ func (p *SalesProcessor) persistSale(ctx context.Context, event events.SaleCreat
 		}
 
 		_, err = tx.Exec(ctx, `
-			INSERT INTO outbox_events (event_id, event_type, aggregate_id, payload)
-			VALUES ($1, $2, $3, $4)
+			INSERT INTO outbox_events (event_id, event_type, aggregate_id, payload, trace_context)
+			VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (event_id) DO NOTHING
-		`, event.EventID, statusEventName(status), event.SaleID, payload)
+		`, event.EventID, statusEventName(status), event.SaleID, payload, observability.TraceContext(ctx))
 		if err != nil {
 			return err
 		}
