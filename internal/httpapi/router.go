@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/varner/sales-event-project/internal/correlation"
 	"github.com/varner/sales-event-project/internal/events"
 	"github.com/varner/sales-event-project/internal/metrics"
 	"github.com/varner/sales-event-project/internal/observability"
@@ -235,7 +236,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 	}
 
 	router := gin.New()
-	router.Use(gin.Recovery(), otelgin.Middleware("sales-event-api"), observability.GinCorrelationMiddleware(), metrics.GinMiddleware())
+	router.Use(gin.Recovery(), correlationMiddleware(), otelgin.Middleware("sales-event-api"), observability.GinCorrelationMiddleware(), metrics.GinMiddleware())
 
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -421,6 +422,8 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		}
 
 		saleID := uuid.NewString()
+		correlationMetadata := requestCorrelationMetadata(c, saleID)
+		requestContext := correlation.ContextWithMetadata(c.Request.Context(), correlationMetadata)
 		event := events.SaleCreated{
 			EventID:       uuid.NewString(),
 			EventType:     "SALE_CREATED",
@@ -431,6 +434,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			CustomerName:  req.CustomerName,
 			CustomerEmail: req.CustomerEmail,
 			Items:         make([]events.SaleItem, 0, len(req.Items)),
+			Metadata:      eventCorrelationMetadata(correlationMetadata),
 		}
 
 		for _, item := range req.Items {
@@ -441,12 +445,18 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			})
 		}
 
-		if err := deps.Broker.PublishJSON(c.Request.Context(), events.SaleCreatedRoutingKey, event); err != nil {
+		if err := deps.Broker.PublishJSON(requestContext, events.SaleCreatedRoutingKey, event); err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "could not enqueue sale"})
 			return
 		}
 
+		correlation.WriteHTTPHeaders(c.Writer.Header(), correlationMetadata)
 		metrics.SalesCreatedTotal.Inc()
+		logFields := append(correlation.LogFields(correlationMetadata),
+			"sale_id", saleID,
+			"sales_event_id", req.SalesEventID,
+		)
+		slog.Info("sale accepted", logFields...)
 		c.JSON(http.StatusAccepted, gin.H{
 			"saleId": saleID,
 			"status": events.SaleProcessingStatus,

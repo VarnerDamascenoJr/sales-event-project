@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/varner/sales-event-project/internal/correlation"
 	"github.com/varner/sales-event-project/internal/events"
 )
 
@@ -54,6 +55,15 @@ func TestCreateSalePublishesEvent(t *testing.T) {
 	if broker.published[0].routingKey != events.SaleCreatedRoutingKey {
 		t.Fatalf("expected routing key %q, got %q", events.SaleCreatedRoutingKey, broker.published[0].routingKey)
 	}
+	if response.Header().Get(correlation.RequestIDHeader) == "" {
+		t.Fatal("expected response to include request id")
+	}
+	if response.Header().Get(correlation.CorrelationIDHeader) == "" {
+		t.Fatal("expected response to include correlation id")
+	}
+	if response.Header().Get(correlation.TransactionIDHeader) == "" {
+		t.Fatal("expected response to include transaction id")
+	}
 
 	event, ok := broker.published[0].value.(events.SaleCreated)
 	if !ok {
@@ -61,6 +71,68 @@ func TestCreateSalePublishesEvent(t *testing.T) {
 	}
 	if event.SalesEventID != testSalesEventID || event.CustomerID != "customer-001" || event.CustomerEmail != "ada@example.com" {
 		t.Fatalf("published event has unexpected payload: %+v", event)
+	}
+}
+
+func TestCreateSalePropagatesCorrelationMetadata(t *testing.T) {
+	router, broker, _ := newTestRouter(fakeSalesStore{
+		salesEventExists: true,
+		ticket: TicketReadModel{
+			Name:              "General Admission",
+			Price:             10000,
+			AvailableQuantity: 10,
+		},
+	})
+
+	response := performRequestWithHeaders(t, router, http.MethodPost, "/sales", map[string]any{
+		"salesEventId":  testSalesEventID,
+		"customerId":    "customer-001",
+		"customerName":  "Ada Lovelace",
+		"customerEmail": "ada@example.com",
+		"items": []map[string]any{
+			{
+				"ticketId":  testTicketID,
+				"quantity":  2,
+				"unitPrice": 10000,
+			},
+		},
+	}, map[string]string{
+		correlation.RequestIDHeader:     "req-demo",
+		correlation.CorrelationIDHeader: "corr-demo",
+	})
+
+	assertStatus(t, response, http.StatusAccepted)
+	if len(broker.published) != 1 {
+		t.Fatalf("expected one published event, got %d", len(broker.published))
+	}
+
+	var body struct {
+		SaleID string `json:"saleId"`
+	}
+	decodeResponse(t, response, &body)
+
+	if response.Header().Get(correlation.RequestIDHeader) != "req-demo" {
+		t.Fatalf("expected request id header to be preserved, got %q", response.Header().Get(correlation.RequestIDHeader))
+	}
+	if response.Header().Get(correlation.CorrelationIDHeader) != "corr-demo" {
+		t.Fatalf("expected correlation id header to be preserved, got %q", response.Header().Get(correlation.CorrelationIDHeader))
+	}
+	if response.Header().Get(correlation.TransactionIDHeader) != body.SaleID {
+		t.Fatalf("expected transaction id header to be sale id %q, got %q", body.SaleID, response.Header().Get(correlation.TransactionIDHeader))
+	}
+
+	event := broker.published[0].value.(events.SaleCreated)
+	if event.Metadata.RequestID != "req-demo" {
+		t.Fatalf("expected event request id to be propagated, got %q", event.Metadata.RequestID)
+	}
+	if event.Metadata.CorrelationID != "corr-demo" || event.Metadata.TransactionID != body.SaleID {
+		t.Fatalf("unexpected event metadata: %+v", event.Metadata)
+	}
+	if broker.published[0].metadata.CorrelationID != "corr-demo" {
+		t.Fatalf("expected broker context metadata to be propagated, got %+v", broker.published[0].metadata)
+	}
+	if broker.published[0].metadata.TransactionID != body.SaleID {
+		t.Fatalf("expected broker context transaction id to be sale id %q, got %+v", body.SaleID, broker.published[0].metadata)
 	}
 }
 
@@ -699,16 +771,19 @@ func (s *fakeAuthStore) AuthenticateAPIKey(_ context.Context, key string) (APIKe
 type publishedEvent struct {
 	routingKey string
 	value      any
+	metadata   correlation.Metadata
 }
 
-func (p *fakePublisher) PublishJSON(_ context.Context, routingKey string, value any) error {
+func (p *fakePublisher) PublishJSON(ctx context.Context, routingKey string, value any) error {
 	if p.err != nil {
 		return p.err
 	}
 
+	metadata, _ := correlation.FromContext(ctx)
 	p.published = append(p.published, publishedEvent{
 		routingKey: routingKey,
 		value:      value,
+		metadata:   metadata,
 	})
 	return nil
 }

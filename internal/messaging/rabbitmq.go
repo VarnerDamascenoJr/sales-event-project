@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/rabbitmq/amqp091-go"
+	"github.com/varner/sales-event-project/internal/correlation"
 	"github.com/varner/sales-event-project/internal/metrics"
 	"github.com/varner/sales-event-project/internal/observability"
 	"go.opentelemetry.io/otel"
@@ -104,6 +105,12 @@ func (r *RabbitMQ) PublishJSON(ctx context.Context, routingKey string, value any
 
 	headers := amqp091.Table{}
 	observability.InjectAMQPContext(ctx, headers)
+	if metadata, ok := correlation.FromContext(ctx); ok {
+		headers[correlation.AMQPRequestIDHeader] = metadata.RequestID
+		headers[correlation.AMQPCorrelationIDHeader] = metadata.CorrelationID
+		headers[correlation.AMQPTransactionIDHeader] = metadata.TransactionID
+	}
+
 	if err := r.channel.PublishWithContext(ctx, r.exchange, routingKey, false, false, amqp091.Publishing{
 		ContentType:  "application/json",
 		DeliveryMode: amqp091.Persistent,
