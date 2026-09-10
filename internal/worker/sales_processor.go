@@ -29,6 +29,7 @@ func (p *SalesProcessor) Handle(ctx context.Context, delivery amqp091.Delivery) 
 		metrics.WorkerSalesProcessedTotal.WithLabelValues(events.SaleFailedStatus).Inc()
 		return err
 	}
+	ctx = contextWithEventMetadata(ctx, event.Metadata)
 
 	status := events.SalePendingPaymentStatus
 	if len(event.Items) == 0 {

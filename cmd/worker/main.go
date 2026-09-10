@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/varner/sales-event-project/internal/config"
+	"github.com/varner/sales-event-project/internal/correlation"
 	"github.com/varner/sales-event-project/internal/database"
 	"github.com/varner/sales-event-project/internal/events"
 	"github.com/varner/sales-event-project/internal/messaging"
@@ -114,12 +115,13 @@ func main() {
 			}
 
 			messageCtx, messageSpan := observability.StartMessageSpan(ctx, delivery, "rabbitmq consume sales.created")
+			messageCtx = correlation.ContextWithMetadata(messageCtx, correlation.FromAMQPHeaders(delivery.Headers))
 			processCtx, processCancel := context.WithTimeout(messageCtx, 15*time.Second)
 			start := time.Now()
 			if err := salesProcessor.Handle(processCtx, delivery); err != nil {
+				slog.ErrorContext(processCtx, "process sale created message failed", "queue", cfg.SalesCreatedQueue, "error", err)
 				processCancel()
 				messageSpan.End()
-				slog.Error("process sale created message failed", "queue", cfg.SalesCreatedQueue, "error", err)
 				_ = delivery.Nack(false, false)
 				recordWorkerMessage(cfg.SalesCreatedQueue, "failed", start)
 				continue
@@ -128,7 +130,7 @@ func main() {
 			messageSpan.End()
 
 			if err := delivery.Ack(false); err != nil {
-				slog.Error("ack message failed", "queue", cfg.SalesCreatedQueue, "error", err)
+				slog.ErrorContext(messageCtx, "ack message failed", "queue", cfg.SalesCreatedQueue, "error", err)
 			}
 			recordWorkerMessage(cfg.SalesCreatedQueue, "acked", start)
 		case delivery, ok := <-saleCompletedDeliveries:
@@ -138,12 +140,13 @@ func main() {
 			}
 
 			messageCtx, messageSpan := observability.StartMessageSpan(ctx, delivery, "rabbitmq consume sale.completed")
+			messageCtx = correlation.ContextWithMetadata(messageCtx, correlation.FromAMQPHeaders(delivery.Headers))
 			processCtx, processCancel := context.WithTimeout(messageCtx, 30*time.Second)
 			start := time.Now()
 			if err := ticketDeliveryProcessor.Handle(processCtx, delivery); err != nil {
+				slog.ErrorContext(processCtx, "deliver tickets failed", "queue", cfg.SaleCompletedQueue, "error", err)
 				processCancel()
 				messageSpan.End()
-				slog.Error("deliver tickets failed", "queue", cfg.SaleCompletedQueue, "error", err)
 				_ = delivery.Nack(false, false)
 				recordWorkerMessage(cfg.SaleCompletedQueue, "failed", start)
 				continue
@@ -152,7 +155,7 @@ func main() {
 			messageSpan.End()
 
 			if err := delivery.Ack(false); err != nil {
-				slog.Error("ack message failed", "queue", cfg.SaleCompletedQueue, "error", err)
+				slog.ErrorContext(messageCtx, "ack message failed", "queue", cfg.SaleCompletedQueue, "error", err)
 			}
 			recordWorkerMessage(cfg.SaleCompletedQueue, "acked", start)
 		}

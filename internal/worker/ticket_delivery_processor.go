@@ -67,6 +67,7 @@ func (p *TicketDeliveryProcessor) Handle(ctx context.Context, delivery amqp091.D
 		metrics.TicketDeliveryTotal.WithLabelValues("invalid_message").Inc()
 		return err
 	}
+	ctx = contextWithEventMetadata(ctx, event.Metadata)
 
 	start := time.Now()
 	ticketEmail, err := p.prepareTicketEmail(ctx, event.SaleID)
@@ -76,15 +77,15 @@ func (p *TicketDeliveryProcessor) Handle(ctx context.Context, delivery amqp091.D
 	}
 	if ticketEmail == nil {
 		metrics.TicketDeliveryTotal.WithLabelValues("skipped").Inc()
-		slog.Info("ticket delivery skipped", "sale_id", event.SaleID)
+		slog.InfoContext(ctx, "ticket delivery skipped", "sale_id", event.SaleID)
 		return nil
 	}
 
 	if err := p.sender.SendTickets(ctx, *ticketEmail); err != nil {
 		metrics.TicketDeliveryTotal.WithLabelValues("failed").Inc()
-		slog.Error("send ticket email failed", "sale_id", event.SaleID, "recipient", ticketEmail.To, "error", err)
+		slog.ErrorContext(ctx, "send ticket email failed", "sale_id", event.SaleID, "recipient", ticketEmail.To, "error", err)
 		if markErr := p.markTicketEmailFailed(ctx, event.SaleID, err); markErr != nil {
-			slog.Error("mark ticket email failed", "sale_id", event.SaleID, "error", markErr)
+			slog.ErrorContext(ctx, "mark ticket email failed", "sale_id", event.SaleID, "error", markErr)
 		}
 		return err
 	}
@@ -96,7 +97,7 @@ func (p *TicketDeliveryProcessor) Handle(ctx context.Context, delivery amqp091.D
 
 	metrics.TicketDeliveryTotal.WithLabelValues("sent").Inc()
 	metrics.IssuedTicketsTotal.Add(float64(len(ticketEmail.Tickets)))
-	slog.Info("ticket email delivered",
+	slog.InfoContext(ctx, "ticket email delivered",
 		"sale_id", event.SaleID,
 		"sales_event_id", event.SalesEventID,
 		"recipient", ticketEmail.To,
