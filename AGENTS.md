@@ -27,6 +27,7 @@ Resumo mínimo para futuros agentes.
 - Entrypoints:
   - `cmd/api`
   - `cmd/worker`
+  - `cmd/email-retry-worker`
   - `cmd/migrate`
 
 ## Hotspots
@@ -40,7 +41,7 @@ Resumo mínimo para futuros agentes.
 ## Comandos úteis
 
 - `docker compose up --build`
-- `docker compose logs -f api worker`
+- `docker compose logs -f api worker email-retry-worker`
 - `make test`
 - `make lint`
 - `make test-cover`
