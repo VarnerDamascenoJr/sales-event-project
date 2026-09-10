@@ -9,6 +9,13 @@ Cliente -> Gin API -> RabbitMQ -> Worker Go -> PostgreSQL
                               \-> Prometheus -> Grafana
 ```
 
+## Convencoes de correlacao
+
+Este projeto adota as convencoes compartilhadas do portfolio para
+`X-Request-ID`, `X-Correlation-ID`, `X-Transaction-ID`, metadados de eventos,
+logs e traces. A fonte de verdade esta no documento
+[`portfolio-correlation-conventions.md`](https://github.com/VarnerDamascenoJr/OptiFlow/blob/main/docs/portfolio-correlation-conventions.md).
+
 ## Componentes
 
 - `cmd/api`: API HTTP em Gin. Valida a venda, publica `SALE_CREATED`, cria intents de pagamento, recebe webhooks assinados de pagamento e grava eventos na outbox.

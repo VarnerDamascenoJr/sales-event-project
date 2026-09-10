@@ -26,6 +26,13 @@ var AvailableSaleStatuses = []string{
 	SaleFailedStatus,
 }
 
+type CorrelationMetadata struct {
+	RequestID     string `json:"requestId,omitempty"`
+	CorrelationID string `json:"correlationId,omitempty"`
+	TransactionID string `json:"transactionId,omitempty"`
+	CausationID   string `json:"causationId,omitempty"`
+}
+
 type SaleCreated struct {
 	EventID       string     `json:"eventId"`
 	EventType     string     `json:"eventType"`
@@ -36,6 +43,7 @@ type SaleCreated struct {
 	CustomerName  string     `json:"customerName"`
 	CustomerEmail string     `json:"customerEmail"`
 	Items         []SaleItem `json:"items"`
+	Metadata      CorrelationMetadata `json:"metadata,omitempty"`
 }
 
 type SaleCompleted struct {
@@ -44,6 +52,7 @@ type SaleCompleted struct {
 	OccurredAt   time.Time `json:"occurredAt"`
 	SaleID       string    `json:"saleId"`
 	SalesEventID string    `json:"salesEventId"`
+	Metadata     CorrelationMetadata `json:"metadata,omitempty"`
 }
 
 type SaleItem struct {
