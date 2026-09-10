@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/rabbitmq/amqp091-go"
 )
 
 const (
@@ -34,9 +35,25 @@ func FromHTTPHeader(header http.Header) Metadata {
 	}
 }
 
+func FromAMQPHeaders(headers amqp091.Table) Metadata {
+	return Metadata{
+		RequestID:     clean(amqpHeaderString(headers, AMQPRequestIDHeader)),
+		CorrelationID: clean(amqpHeaderString(headers, AMQPCorrelationIDHeader)),
+		TransactionID: clean(amqpHeaderString(headers, AMQPTransactionIDHeader)),
+	}
+}
+
 func WithTransactionID(metadata Metadata, transactionID string) Metadata {
 	metadata.TransactionID = firstNonBlank(transactionID, metadata.TransactionID)
 	return metadata
+}
+
+func Merge(primary Metadata, fallback Metadata) Metadata {
+	return Metadata{
+		RequestID:     firstNonBlank(primary.RequestID, fallback.RequestID),
+		CorrelationID: firstNonBlank(primary.CorrelationID, fallback.CorrelationID),
+		TransactionID: firstNonBlank(primary.TransactionID, fallback.TransactionID),
+	}
 }
 
 func ContextWithMetadata(ctx context.Context, metadata Metadata) context.Context {
@@ -93,4 +110,24 @@ func firstNonBlank(values ...string) string {
 
 func newID(prefix string) string {
 	return prefix + "_" + uuid.NewString()
+}
+
+func amqpHeaderString(headers amqp091.Table, name string) string {
+	if headers == nil {
+		return ""
+	}
+
+	value, ok := headers[name]
+	if !ok {
+		return ""
+	}
+
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case []byte:
+		return string(typed)
+	default:
+		return ""
+	}
 }

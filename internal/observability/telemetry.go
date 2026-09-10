@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/rabbitmq/amqp091-go"
+	"github.com/varner/sales-event-project/internal/correlation"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -96,8 +97,9 @@ type traceIDContextKey struct{}
 
 // LogAttrs returns correlation fields suitable for slog calls made with ctx.
 func LogAttrs(ctx context.Context) []any {
-	attrs := make([]any, 0, 2)
-	if requestID, ok := ctx.Value(requestIDContextKey{}).(string); ok {
+	metadata, hasMetadata := correlation.FromContext(ctx)
+	attrs := correlation.LogFields(metadata)
+	if requestID, ok := ctx.Value(requestIDContextKey{}).(string); ok && (!hasMetadata || metadata.RequestID == "") {
 		attrs = append(attrs, "request_id", requestID)
 	}
 	if traceID, ok := ctx.Value(traceIDContextKey{}).(string); ok {
