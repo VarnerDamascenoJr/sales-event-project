@@ -92,8 +92,6 @@ services:
       SMTP_FROM: ${SMTP_FROM:-}
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:-generic}
       EMAIL_WEBHOOK_SECRET: ${EMAIL_WEBHOOK_SECRET:-change-me-email-webhook-secret}
-      EMAIL_RETRY_ENABLED: ${EMAIL_RETRY_ENABLED:-true}
-      EMAIL_RETRY_INTERVAL: ${EMAIL_RETRY_INTERVAL:-1m}
       RETENTION_ENABLED: ${RETENTION_ENABLED:-true}
       RETENTION_INTERVAL: ${RETENTION_INTERVAL:-24h}
       RETENTION_PUBLISHED_OUTBOX_MAX_AGE: ${RETENTION_PUBLISHED_OUTBOX_MAX_AGE:-720h}
@@ -111,6 +109,34 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  email-retry-worker:
+    build:
+      context: .
+      target: email-retry-worker
+    environment:
+      APP_ENV: development
+      EMAIL_RETRY_METRICS_PORT: 9092
+      EMAIL_RETRY_METRICS_HOST: 0.0.0.0
+      DATABASE_URL: postgres://sales:sales@postgres:5432/sales_event?sslmode=disable
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-generic}
+      EMAIL_RETRY_ENABLED: ${EMAIL_RETRY_ENABLED:-true}
+      EMAIL_RETRY_INTERVAL: ${EMAIL_RETRY_INTERVAL:-1m}
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+    ports:
+      - "9092:9092"
+    networks:
+      - default
+      - operational-observability
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
   prometheus:
     image: prom/prometheus:v2.55.1
     command:
@@ -123,6 +149,7 @@ services:
     depends_on:
       - api
       - worker
+      - email-retry-worker
 
   loki:
     image: grafana/loki:3.2.1

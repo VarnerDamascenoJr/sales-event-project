@@ -12,6 +12,8 @@ type Config struct {
 	APIPort                     string
 	WorkerMetricsPort           string
 	WorkerMetricsHost           string
+	EmailRetryMetricsPort       string
+	EmailRetryMetricsHost       string
 	DatabaseURL                 string
 	RabbitMQURL                 string
 	RabbitMQExchange            string
@@ -46,6 +48,8 @@ func Load() Config {
 		APIPort:                     getEnv("API_PORT", "8080"),
 		WorkerMetricsPort:           getEnv("WORKER_METRICS_PORT", "9091"),
 		WorkerMetricsHost:           getEnv("WORKER_METRICS_HOST", workerMetricsHostDefault(appEnv)),
+		EmailRetryMetricsPort:       getEnv("EMAIL_RETRY_METRICS_PORT", "9092"),
+		EmailRetryMetricsHost:       getEnv("EMAIL_RETRY_METRICS_HOST", workerMetricsHostDefault(appEnv)),
 		DatabaseURL:                 getEnv("DATABASE_URL", "postgres://sales:sales@localhost:5432/sales_event?sslmode=disable"),
 		RabbitMQURL:                 getEnv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
 		RabbitMQExchange:            getEnv("RABBITMQ_EXCHANGE", "sales.exchange"),

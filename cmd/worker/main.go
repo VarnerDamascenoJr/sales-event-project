@@ -2,16 +2,12 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/varner/sales-event-project/internal/config"
 	"github.com/varner/sales-event-project/internal/correlation"
 	"github.com/varner/sales-event-project/internal/database"
@@ -91,11 +87,8 @@ func main() {
 	outboxPublisher := outbox.NewPublisher(db, outboxBroker)
 	retentionCleaner := retention.NewCleaner(db)
 	slog.Info("worker consuming queues", "sales_created_queue", cfg.SalesCreatedQueue, "sale_completed_queue", cfg.SaleCompletedQueue)
-	startMetricsServer(cfg.WorkerMetricsHost, cfg.WorkerMetricsPort)
+	observability.StartMetricsServer(cfg.WorkerMetricsHost, cfg.WorkerMetricsPort, "worker")
 	go outboxPublisher.Run(ctx, time.Second, 10)
-	if cfg.EmailRetryEnabled {
-		go ticketDeliveryProcessor.RunEmailRetries(ctx, cfg.EmailRetryInterval, 10)
-	}
 	if cfg.RetentionEnabled {
 		go retentionCleaner.Run(ctx, cfg.RetentionInterval, retention.Policy{
 			PublishedOutboxMaxAge: cfg.RetentionPublishedOutboxAge,
@@ -165,26 +158,4 @@ func main() {
 func recordWorkerMessage(queue string, status string, start time.Time) {
 	metrics.WorkerMessagesProcessedTotal.WithLabelValues(queue, status).Inc()
 	metrics.WorkerMessageDuration.WithLabelValues(queue).Observe(time.Since(start).Seconds())
-}
-
-func startMetricsServer(host string, port string) {
-	router := gin.New()
-	router.Use(gin.Recovery())
-	router.GET("/healthz", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-	})
-	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
-
-	server := &http.Server{
-		Addr:              host + ":" + port,
-		Handler:           router,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	go func() {
-		slog.Info("worker metrics listening", "host", host, "port", port)
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Error("worker metrics server failed", "error", err)
-		}
-	}()
 }

@@ -8,6 +8,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/api ./cmd/api
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/worker ./cmd/worker
+RUN CGO_ENABLED=0 GOOS=linux go build -o /out/email-retry-worker ./cmd/email-retry-worker
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/migrate ./cmd/migrate
 
 FROM alpine:3.20 AS api
@@ -27,6 +28,15 @@ COPY --from=build /out/worker /app/worker
 USER appuser
 EXPOSE 9091
 ENTRYPOINT ["/app/worker"]
+
+FROM alpine:3.20 AS email-retry-worker
+
+RUN adduser -D -H appuser
+WORKDIR /app
+COPY --from=build /out/email-retry-worker /app/email-retry-worker
+USER appuser
+EXPOSE 9092
+ENTRYPOINT ["/app/email-retry-worker"]
 
 FROM alpine:3.20 AS migrate
 

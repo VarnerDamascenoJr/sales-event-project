@@ -7,7 +7,9 @@
 - `cmd/api`
   - entrypoint da API HTTP.
 - `cmd/worker`
-  - entrypoint do worker e do servidor de métricas do worker.
+  - entrypoint do worker principal e do servidor de métricas do worker.
+- `cmd/email-retry-worker`
+  - entrypoint dedicado ao retry de notificacoes de email.
 - `cmd/migrate`
   - executor customizado de migrations.
 
@@ -71,7 +73,7 @@
 - `go.mod`
   - módulo, versão Go e dependências.
 - `Dockerfile`
-  - build multi-stage de `api`, `worker` e `migrate`.
+  - build multi-stage de `api`, `worker`, `email-retry-worker` e `migrate`.
 - `docker-compose.yml`
   - stack local completa.
 - `.env.example`
@@ -103,7 +105,7 @@
 - `SalesProcessor`
   - traduz evento `SALE_CREATED` em reserva persistida.
 - `TicketDeliveryProcessor`
-  - emite QR codes, registra email pendente, envia tickets e processa retries.
+  - emite QR codes, registra email pendente, envia tickets e fornece a rotina usada pelo worker dedicado de retry.
 
 ## `internal/outbox`
 

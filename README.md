@@ -6,6 +6,7 @@ O projeto modela uma venda de ingressos como fluxo orientado a eventos:
 
 ```text
 Cliente -> Gin API -> RabbitMQ -> Worker Go -> PostgreSQL
+                              \-> Email Retry Worker
                               \-> Prometheus -> Grafana
 ```
 
@@ -19,9 +20,10 @@ logs e traces. A fonte de verdade esta no documento
 ## Componentes
 
 - `cmd/api`: API HTTP em Gin. Valida a venda, publica `SALE_CREATED`, cria intents de pagamento, recebe webhooks assinados de pagamento e grava eventos na outbox.
-- `cmd/worker`: consumidor RabbitMQ e publicador de outbox. Processa `SALE_CREATED`, reserva ingressos, publica eventos pendentes da outbox, consome `SALE_COMPLETED`, emite tickets únicos com QR Code e envia o email ao comprador.
+- `cmd/worker`: consumidor RabbitMQ e publicador de outbox. Processa `SALE_CREATED`, reserva ingressos, publica eventos pendentes da outbox, consome `SALE_COMPLETED`, emite tickets únicos com QR Code e tenta enviar o email ao comprador.
+- `cmd/email-retry-worker`: worker dedicado ao retry de notificacoes de email com status `FAILED`.
 - `migrations`: migrations versionadas para schema e seed local.
-- `deployments/prometheus`: configuração de scrape da API e do worker.
+- `deployments/prometheus`: configuração de scrape da API, do worker e do worker de retry de email.
 - `deployments/loki` e `deployments/promtail`: coleta e armazenamento de logs dos containers.
 - `deployments/grafana`: datasources e dashboard provisionados.
 
@@ -31,13 +33,14 @@ logs e traces. A fonte de verdade esta no documento
 docker compose up --build
 ```
 
-O serviço `migrate` aplica as migrations antes da API e do worker iniciarem.
+O serviço `migrate` aplica as migrations antes da API, do worker e do worker de retry de email iniciarem.
 
 Serviços principais:
 
 - API: `http://localhost:8080`
 - RabbitMQ Management: `http://localhost:15672` (`guest` / `guest`)
 - Prometheus: `http://localhost:9090`
+- Email Retry Worker metrics: `http://localhost:9092`
 - Loki: `http://localhost:3100`
 - Grafana: `http://localhost:3000` (`admin` / `admin`)
 
@@ -157,6 +160,8 @@ Se `SMTP_HOST` não estiver configurado, o worker apenas registra no log que o e
 - `PUBLIC_RATE_LIMIT_BURST`
 - `EMAIL_RETRY_ENABLED`
 - `EMAIL_RETRY_INTERVAL`
+- `EMAIL_RETRY_METRICS_HOST`
+- `EMAIL_RETRY_METRICS_PORT`
 
 ## Retencao de dados temporarios
 
@@ -178,7 +183,7 @@ Vendas, pagamentos, tickets emitidos e check-ins nao sao apagados por essa rotin
 
 ## Retry de email
 
-Quando o envio do ticket por email falha, o worker registra o erro em `email_notifications` e agenda novas tentativas automaticamente.
+Quando o envio do ticket por email falha, o worker principal registra o erro em `email_notifications` e agenda novas tentativas. O reenvio fica em um processo separado, `cmd/email-retry-worker`, que pode ser iniciado, parado e observado sem interromper o consumo principal de vendas e tickets.
 
 - `FAILED`: falhou e entrara em retry depois de `next_retry_at`.
 - `DEAD_LETTER`: excedeu o limite de tentativas.
@@ -189,6 +194,8 @@ Configuracao:
 ```env
 EMAIL_RETRY_ENABLED=true
 EMAIL_RETRY_INTERVAL=1m
+EMAIL_RETRY_METRICS_HOST=0.0.0.0
+EMAIL_RETRY_METRICS_PORT=9092
 ```
 
 O retry usa backoff exponencial, limitado a 1 hora. Depois de 5 tentativas sem sucesso, a notificacao vira `DEAD_LETTER`.
@@ -229,6 +236,8 @@ PUBLIC_RATE_LIMIT_ENABLED=true
 PUBLIC_RATE_LIMIT_REQUESTS_PER_SECOND=5
 PUBLIC_RATE_LIMIT_BURST=10
 WORKER_METRICS_HOST=0.0.0.0
+EMAIL_RETRY_METRICS_HOST=0.0.0.0
+EMAIL_RETRY_METRICS_PORT=9092
 ```
 
 Primeira versao:
@@ -324,6 +333,7 @@ Endpoints:
 
 - API: `http://localhost:8080/metrics`
 - Worker: `http://localhost:9091/metrics`
+- Email Retry Worker: `http://localhost:9092/metrics`
 
 Métricas principais:
 
@@ -351,7 +361,9 @@ Consultas úteis no Grafana Explore:
 ```logql
 {service="api"}
 {service="worker"}
+{service="email-retry-worker"}
 {service="worker"} |= "ticket email delivered"
+{service="email-retry-worker"} |= "retry ticket email"
 {service="worker"} | json | sale_id="generated-sale-uuid"
 ```
 
@@ -433,4 +445,4 @@ O worker tenta publicar eventos `PENDING` ou `FAILED` com `next_attempt_at <= NO
 
 ## Próximos passos naturais
 
-- Separar retry de notificações com status `FAILED` em um worker próprio.
+- Criar cenário controlado para exercitar o `email-retry-worker` com SMTP falho.
