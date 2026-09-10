@@ -35,7 +35,12 @@
   - abre duas conexões RabbitMQ;
   - consome filas `sale.created` e `sale.completed`;
   - sobe servidor de métricas do worker;
-  - inicia goroutines de outbox, retry de email e retenção.
+  - inicia goroutines de outbox e retenção.
+- `cmd/email-retry-worker/main.go`
+  - carrega configuração;
+  - abre PostgreSQL;
+  - sobe servidor de métricas próprio;
+  - executa o retry de emails `FAILED` em ciclo separado do consumo RabbitMQ.
 - `cmd/migrate/main.go`
   - carrega configuração;
   - abre PostgreSQL;
@@ -87,7 +92,7 @@
 - consumo de `sale.created` (`internal/worker/sales_processor.go`);
 - consumo de `sale.completed` (`internal/worker/ticket_delivery_processor.go`);
 - publicação da outbox (`internal/outbox/publisher.go`);
-- retry de emails (`internal/worker/ticket_delivery_processor.go`);
+- retry de emails (`cmd/email-retry-worker`, `internal/worker/ticket_delivery_processor.go`);
 - limpeza de retenção (`internal/retention/cleaner.go`).
 
 ## Limites e acoplamentos importantes
@@ -107,7 +112,7 @@
 ## Infraestrutura identificada
 
 - `Fato confirmado`: Docker multi-stage build no `Dockerfile`.
-- `Fato confirmado`: `docker-compose.yml` sobe `postgres`, `rabbitmq`, `migrate`, `api`, `worker`, `prometheus`, `loki`, `promtail` e `grafana`.
+- `Fato confirmado`: `docker-compose.yml` sobe `postgres`, `rabbitmq`, `migrate`, `api`, `worker`, `email-retry-worker`, `prometheus`, `loki`, `promtail` e `grafana`.
 - `Desconhecido`: ambiente de produção real, provedor cloud e estratégia de deploy fora do Compose.
 
 ## Riscos arquiteturais

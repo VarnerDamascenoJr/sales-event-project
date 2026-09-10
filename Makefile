@@ -7,7 +7,7 @@ down:
 	docker compose down
 
 logs:
-	docker compose logs -f api worker
+	docker compose logs -f api worker email-retry-worker
 
 fmt:
 	docker run --rm -v "$$(pwd)":/app -w /app golang:1.22-alpine gofmt -w ./cmd ./internal
@@ -41,4 +41,4 @@ test-cover:
 	docker run --rm -v "$$(pwd)":/app -w /app golang:1.22-alpine go test ./... -coverprofile=coverage.out
 
 build:
-	docker compose build api worker
+	docker compose build api worker email-retry-worker

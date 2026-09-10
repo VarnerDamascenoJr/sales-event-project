@@ -249,11 +249,12 @@ sequenceDiagram
 
 ### Resumo
 
-- Entrada: ticker interno do worker
+- Entrada: ticker interno do `email-retry-worker`
 - Efeito: reenvia emails em `FAILED` com backoff exponencial.
 
 ### Evidência
 
+- `cmd/email-retry-worker`
 - `RunEmailRetries`
 - `RetryFailedEmails`
 - `emailRetryBackoff`
