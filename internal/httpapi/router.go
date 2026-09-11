@@ -140,29 +140,32 @@ type RecordEmailEventRequest struct {
 }
 
 type ProcessPaymentResult struct {
-	SaleID       string     `json:"saleId"`
-	SalesEventID string     `json:"salesEventId"`
-	SaleStatus   string     `json:"saleStatus"`
-	Payment      PaymentDTO `json:"payment"`
+	SaleID       string               `json:"saleId"`
+	SalesEventID string               `json:"salesEventId"`
+	SaleStatus   string               `json:"saleStatus"`
+	Payment      PaymentDTO           `json:"payment"`
+	Metadata     correlation.Metadata `json:"-"`
 }
 
 type CheckInTicketResult struct {
-	CheckInID      string    `json:"checkInId"`
-	IssuedTicketID string    `json:"issuedTicketId"`
-	SalesEventID   string    `json:"salesEventId"`
-	SaleID         string    `json:"saleId"`
-	TicketID       string    `json:"ticketId"`
-	TicketName     string    `json:"ticketName"`
-	CustomerID     string    `json:"customerId"`
-	CustomerName   string    `json:"customerName"`
-	CheckedInAt    time.Time `json:"checkedInAt"`
+	CheckInID      string               `json:"checkInId"`
+	IssuedTicketID string               `json:"issuedTicketId"`
+	SalesEventID   string               `json:"salesEventId"`
+	SaleID         string               `json:"saleId"`
+	TicketID       string               `json:"ticketId"`
+	TicketName     string               `json:"ticketName"`
+	CustomerID     string               `json:"customerId"`
+	CustomerName   string               `json:"customerName"`
+	CheckedInAt    time.Time            `json:"checkedInAt"`
+	Metadata       correlation.Metadata `json:"-"`
 }
 
 type RecordEmailEventResult struct {
-	SaleID          string    `json:"saleId"`
-	Status          string    `json:"status"`
-	ProviderEventID string    `json:"providerEventId"`
-	RecordedAt      time.Time `json:"recordedAt"`
+	SaleID          string               `json:"saleId"`
+	Status          string               `json:"status"`
+	ProviderEventID string               `json:"providerEventId"`
+	RecordedAt      time.Time            `json:"recordedAt"`
+	Metadata        correlation.Metadata `json:"-"`
 }
 
 type ListSalesResponse struct {
@@ -208,15 +211,16 @@ type PaymentDTO struct {
 }
 
 type PaymentIntentDTO struct {
-	ID                string    `json:"id"`
-	SaleID            string    `json:"saleId"`
-	Status            string    `json:"status"`
-	Provider          string    `json:"provider"`
-	Amount            int       `json:"amount"`
-	ProviderReference string    `json:"providerReference"`
-	ClientSecret      string    `json:"clientSecret"`
-	CreatedAt         time.Time `json:"createdAt"`
-	UpdatedAt         time.Time `json:"updatedAt"`
+	ID                string               `json:"id"`
+	SaleID            string               `json:"saleId"`
+	Status            string               `json:"status"`
+	Provider          string               `json:"provider"`
+	Amount            int                  `json:"amount"`
+	ProviderReference string               `json:"providerReference"`
+	ClientSecret      string               `json:"clientSecret"`
+	CreatedAt         time.Time            `json:"createdAt"`
+	UpdatedAt         time.Time            `json:"updatedAt"`
+	Metadata          correlation.Metadata `json:"-"`
 }
 
 type SaleItemReadDTO struct {
@@ -284,11 +288,13 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			return
 		}
 
-		slog.Info("email event recorded",
+		correlation.WriteHTTPHeaders(c.Writer.Header(), result.Metadata)
+		logFields := append(correlation.LogFields(result.Metadata),
 			"sale_id", result.SaleID,
 			"status", result.Status,
 			"provider_event_id", result.ProviderEventID,
 		)
+		slog.Info("email event recorded", logFields...)
 		c.JSON(http.StatusAccepted, result)
 	})
 
@@ -331,8 +337,9 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			return
 		}
 
+		correlation.WriteHTTPHeaders(c.Writer.Header(), result.Metadata)
 		metrics.PaymentsProcessedTotal.WithLabelValues(result.Payment.Status, result.Payment.Provider).Inc()
-		slog.Info("payment webhook processed",
+		logFields := append(correlation.LogFields(result.Metadata),
 			"sale_id", result.SaleID,
 			"sales_event_id", result.SalesEventID,
 			"payment_status", result.Payment.Status,
@@ -340,6 +347,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			"provider", result.Payment.Provider,
 			"amount", result.Payment.Amount,
 		)
+		slog.Info("payment webhook processed", logFields...)
 		c.JSON(http.StatusAccepted, result)
 	})
 
@@ -498,13 +506,15 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			return
 		}
 
-		slog.Info("payment intent created",
+		correlation.WriteHTTPHeaders(c.Writer.Header(), intent.Metadata)
+		logFields := append(correlation.LogFields(intent.Metadata),
 			"sale_id", intent.SaleID,
 			"payment_intent_id", intent.ID,
 			"provider", intent.Provider,
 			"amount", intent.Amount,
 			"status", intent.Status,
 		)
+		slog.Info("payment intent created", logFields...)
 		c.JSON(http.StatusAccepted, intent)
 	}))
 
@@ -545,8 +555,9 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			return
 		}
 
+		correlation.WriteHTTPHeaders(c.Writer.Header(), result.Metadata)
 		metrics.PaymentsProcessedTotal.WithLabelValues(result.Payment.Status, result.Payment.Provider).Inc()
-		slog.Info("payment processed",
+		logFields := append(correlation.LogFields(result.Metadata),
 			"sale_id", result.SaleID,
 			"sales_event_id", result.SalesEventID,
 			"payment_status", result.Payment.Status,
@@ -554,6 +565,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			"provider", result.Payment.Provider,
 			"amount", result.Payment.Amount,
 		)
+		slog.Info("payment processed", logFields...)
 		c.JSON(http.StatusAccepted, result)
 	})
 
@@ -591,12 +603,14 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			return
 		}
 
-		slog.Info("ticket checked in",
+		correlation.WriteHTTPHeaders(c.Writer.Header(), result.Metadata)
+		logFields := append(correlation.LogFields(result.Metadata),
 			"check_in_id", result.CheckInID,
 			"issued_ticket_id", result.IssuedTicketID,
 			"sales_event_id", result.SalesEventID,
 			"sale_id", result.SaleID,
 		)
+		slog.Info("ticket checked in", logFields...)
 		c.JSON(http.StatusCreated, result)
 	})
 

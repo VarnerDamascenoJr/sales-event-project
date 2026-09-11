@@ -330,6 +330,11 @@ func TestCreatePaymentApprovesPendingSale(t *testing.T) {
 
 func TestCreatePaymentIntentAcceptsPendingSale(t *testing.T) {
 	now := time.Date(2026, 5, 30, 15, 0, 0, 0, time.UTC)
+	metadata := correlation.Metadata{
+		RequestID:     "req-sale-payment-intent",
+		CorrelationID: "corr-sale-payment-intent",
+		TransactionID: testSaleID,
+	}
 	router, _, _ := newTestRouter(fakeSalesStore{
 		paymentIntentResult: PaymentIntentDTO{
 			ID:                "dddddddd-dddd-dddd-dddd-dddddddddddd",
@@ -341,6 +346,7 @@ func TestCreatePaymentIntentAcceptsPendingSale(t *testing.T) {
 			ClientSecret:      "pi_secret",
 			CreatedAt:         now,
 			UpdatedAt:         now,
+			Metadata:          metadata,
 		},
 	})
 
@@ -356,6 +362,7 @@ func TestCreatePaymentIntentAcceptsPendingSale(t *testing.T) {
 	if body.ID == "" || body.Status != events.PaymentPendingStatus || body.ProviderReference == "" {
 		t.Fatalf("unexpected payment intent response: %+v", body)
 	}
+	assertCorrelationHeaders(t, response, metadata)
 }
 
 func TestCreatePaymentRejectsInvalidStatus(t *testing.T) {
@@ -373,6 +380,11 @@ func TestCreatePaymentRejectsInvalidStatus(t *testing.T) {
 
 func TestPaymentWebhookProcessesApprovedPayment(t *testing.T) {
 	now := time.Date(2026, 5, 30, 16, 0, 0, 0, time.UTC)
+	metadata := correlation.Metadata{
+		RequestID:     "req-sale-webhook",
+		CorrelationID: "corr-sale-webhook",
+		TransactionID: testSaleID,
+	}
 	router, _, _ := newTestRouter(fakeSalesStore{
 		paymentWebhookResult: ProcessPaymentResult{
 			SaleID:       testSaleID,
@@ -384,6 +396,7 @@ func TestPaymentWebhookProcessesApprovedPayment(t *testing.T) {
 				Provider:    "credit_card",
 				ProcessedAt: now,
 			},
+			Metadata: metadata,
 		},
 	})
 
@@ -405,6 +418,7 @@ func TestPaymentWebhookProcessesApprovedPayment(t *testing.T) {
 	if body.SaleStatus != events.SaleCompletedStatus || body.Payment.Status != events.PaymentApprovedStatus {
 		t.Fatalf("unexpected payment webhook response: %+v", body)
 	}
+	assertCorrelationHeaders(t, response, metadata)
 }
 
 func TestPaymentWebhookRejectsInvalidSignature(t *testing.T) {
@@ -488,6 +502,11 @@ func TestPublicRateLimiterReturnsTooManyRequests(t *testing.T) {
 func TestCheckInTicketReturnsCreated(t *testing.T) {
 	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
 	issuedTicketID := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	metadata := correlation.Metadata{
+		RequestID:     "req-sale-check-in",
+		CorrelationID: "corr-sale-check-in",
+		TransactionID: testSaleID,
+	}
 	router, _, store := newTestRouter(fakeSalesStore{
 		checkInResult: CheckInTicketResult{
 			CheckInID:      "cccccccc-cccc-cccc-cccc-cccccccccccc",
@@ -499,6 +518,7 @@ func TestCheckInTicketReturnsCreated(t *testing.T) {
 			CustomerID:     "customer-001",
 			CustomerName:   "Ada Lovelace",
 			CheckedInAt:    now,
+			Metadata:       metadata,
 		},
 	})
 
@@ -516,6 +536,7 @@ func TestCheckInTicketReturnsCreated(t *testing.T) {
 	if store.lastCheckInRequest.IssuedTicketID != issuedTicketID {
 		t.Fatalf("expected issued ticket id to be parsed from QR payload, got %+v", store.lastCheckInRequest)
 	}
+	assertCorrelationHeaders(t, response, metadata)
 }
 
 func TestCheckInTicketRejectsInvalidTicketCode(t *testing.T) {
@@ -715,6 +736,19 @@ func assertStatus(t *testing.T, response *httptest.ResponseRecorder, expected in
 	t.Helper()
 	if response.Code != expected {
 		t.Fatalf("expected status %d, got %d: %s", expected, response.Code, response.Body.String())
+	}
+}
+
+func assertCorrelationHeaders(t *testing.T, response *httptest.ResponseRecorder, metadata correlation.Metadata) {
+	t.Helper()
+	if response.Header().Get(correlation.RequestIDHeader) != metadata.RequestID {
+		t.Fatalf("expected request id header %q, got %q", metadata.RequestID, response.Header().Get(correlation.RequestIDHeader))
+	}
+	if response.Header().Get(correlation.CorrelationIDHeader) != metadata.CorrelationID {
+		t.Fatalf("expected correlation id header %q, got %q", metadata.CorrelationID, response.Header().Get(correlation.CorrelationIDHeader))
+	}
+	if response.Header().Get(correlation.TransactionIDHeader) != metadata.TransactionID {
+		t.Fatalf("expected transaction id header %q, got %q", metadata.TransactionID, response.Header().Get(correlation.TransactionIDHeader))
 	}
 }
 
