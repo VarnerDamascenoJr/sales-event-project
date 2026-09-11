@@ -10,7 +10,7 @@ logs:
 	docker compose logs -f api worker email-retry-worker
 
 fmt:
-	docker run --rm -v "$$(pwd)":/app -w /app golang:1.22-alpine gofmt -w ./cmd ./internal
+	docker run --rm -v "$$(pwd)":/app -w /app golang:1.22-alpine gofmt -w ./cmd ./internal ./tests
 
 tidy:
 	docker run --rm -v "$$(pwd)":/app -w /app golang:1.22-alpine go mod tidy
@@ -19,7 +19,7 @@ lint:
 	docker run --rm -v "$$(pwd)":/app -w /app golangci/golangci-lint:v1.62.2 golangci-lint run
 
 lint-fix:
-	docker run --rm -v "$$(pwd)":/app -w /app golang:1.22-alpine gofmt -w ./cmd ./internal
+	docker run --rm -v "$$(pwd)":/app -w /app golang:1.22-alpine gofmt -w ./cmd ./internal ./tests
 	docker run --rm -v "$$(pwd)":/app -w /app golangci/golangci-lint:v1.62.2 golangci-lint run --fix
 
 install-hooks:
@@ -34,7 +34,7 @@ migrate:
 	docker compose run --rm migrate
 
 test-integration:
-	docker compose up --build -d postgres rabbitmq migrate api worker
+	docker compose up --build -d postgres rabbitmq migrate api worker email-retry-worker
 	docker run --rm --network host -v "$$(pwd)":/app -w /app golang:1.22-alpine go test -tags=integration ./tests/integration -count=1 -v
 
 test-cover:
