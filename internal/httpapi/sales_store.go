@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/varner/sales-event-project/internal/correlation"
 	"github.com/varner/sales-event-project/internal/events"
 	"github.com/varner/sales-event-project/internal/observability"
 )
@@ -278,6 +279,7 @@ func (s *PostgresSalesStore) CreatePaymentIntent(ctx context.Context, req Create
 		ClientSecret:      clientSecret,
 		CreatedAt:         createdAt,
 		UpdatedAt:         updatedAt,
+		Metadata:          storedSaleMetadata(ctx, sale.Metadata, req.SaleID),
 	}, nil
 }
 
@@ -320,6 +322,7 @@ func (s *PostgresSalesStore) ProcessPaymentWebhook(ctx context.Context, req Proc
 				Provider:    req.Provider,
 				ProcessedAt: req.OccurredAt.UTC(),
 			},
+			Metadata: storedSaleMetadata(ctx, sale.Metadata, sale.ID),
 		}, nil
 	}
 	if sale.Status == events.SaleFailedStatus && req.Status == events.PaymentFailedStatus {
@@ -333,6 +336,7 @@ func (s *PostgresSalesStore) ProcessPaymentWebhook(ctx context.Context, req Proc
 				Provider:    req.Provider,
 				ProcessedAt: req.OccurredAt.UTC(),
 			},
+			Metadata: storedSaleMetadata(ctx, sale.Metadata, sale.ID),
 		}, nil
 	}
 
@@ -377,6 +381,8 @@ func (s *PostgresSalesStore) processPaymentTx(ctx context.Context, tx pgx.Tx, re
 		return ProcessPaymentResult{}, errValidation("amount does not match sale total amount")
 	}
 
+	metadata := storedSaleMetadata(ctx, sale.Metadata, req.SaleID)
+	ctx = correlation.ContextWithMetadata(ctx, metadata)
 	saleStatus := events.SaleCompletedStatus
 	if paymentStatus == events.PaymentFailedStatus {
 		saleStatus = events.SaleFailedStatus
@@ -419,15 +425,15 @@ func (s *PostgresSalesStore) processPaymentTx(ctx context.Context, tx pgx.Tx, re
 	}
 
 	eventID := uuid.NewString()
-	payload, err := paymentOutboxPayload(eventID, sale.SalesEventID, req, paymentStatus, saleStatus, processedAt)
+	payload, err := paymentOutboxPayload(eventID, sale.SalesEventID, req, paymentStatus, saleStatus, processedAt, metadata)
 	if err != nil {
 		return ProcessPaymentResult{}, err
 	}
 
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO outbox_events (event_id, event_type, aggregate_id, payload, trace_context)
-		VALUES ($1, $2, $3, $4, $5)
-	`, eventID, saleStatusEventName(saleStatus), req.SaleID, payload, observability.TraceContext(ctx)); err != nil {
+		INSERT INTO outbox_events (event_id, event_type, aggregate_id, payload, trace_context, request_id, correlation_id, transaction_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, eventID, saleStatusEventName(saleStatus), req.SaleID, payload, observability.TraceContext(ctx), metadata.RequestID, metadata.CorrelationID, metadata.TransactionID); err != nil {
 		return ProcessPaymentResult{}, err
 	}
 
@@ -436,10 +442,11 @@ func (s *PostgresSalesStore) processPaymentTx(ctx context.Context, tx pgx.Tx, re
 		SalesEventID: sale.SalesEventID,
 		SaleStatus:   saleStatus,
 		Payment:      payment,
+		Metadata:     metadata,
 	}, nil
 }
 
-func paymentOutboxPayload(eventID string, salesEventID string, req ProcessPaymentRequest, paymentStatus string, saleStatus string, occurredAt time.Time) ([]byte, error) {
+func paymentOutboxPayload(eventID string, salesEventID string, req ProcessPaymentRequest, paymentStatus string, saleStatus string, occurredAt time.Time, metadata correlation.Metadata) ([]byte, error) {
 	if saleStatus == events.SaleCompletedStatus {
 		return json.Marshal(events.SaleCompleted{
 			EventID:      eventID,
@@ -447,6 +454,7 @@ func paymentOutboxPayload(eventID string, salesEventID string, req ProcessPaymen
 			OccurredAt:   occurredAt,
 			SaleID:       req.SaleID,
 			SalesEventID: salesEventID,
+			Metadata:     eventCorrelationMetadata(metadata),
 		})
 	}
 
@@ -459,6 +467,7 @@ func paymentOutboxPayload(eventID string, salesEventID string, req ProcessPaymen
 		"paymentStatus": paymentStatus,
 		"amount":        req.Amount,
 		"provider":      req.Provider,
+		"metadata":      eventCorrelationMetadata(metadata),
 	})
 }
 
@@ -474,12 +483,14 @@ type paymentSale struct {
 	TotalAmount    int
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+	Metadata       correlation.Metadata
 }
 
 func (s *PostgresSalesStore) getSaleForPayment(ctx context.Context, tx pgx.Tx, saleID string) (paymentSale, error) {
 	var sale paymentSale
 	if err := tx.QueryRow(ctx, `
-		SELECT s.id, s.sales_event_id, se.name, se.starts_at, s.customer_id, c.name, c.email, s.status, s.total_amount, s.created_at, s.updated_at
+		SELECT s.id, s.sales_event_id, se.name, se.starts_at, s.customer_id, c.name, c.email, s.status, s.total_amount,
+		       s.created_at, s.updated_at, s.request_id, s.correlation_id, s.transaction_id
 		FROM sales s
 		JOIN sales_events se ON se.id = s.sales_event_id
 		JOIN customers c ON c.id = s.customer_id
@@ -497,6 +508,9 @@ func (s *PostgresSalesStore) getSaleForPayment(ctx context.Context, tx pgx.Tx, s
 		&sale.TotalAmount,
 		&sale.CreatedAt,
 		&sale.UpdatedAt,
+		&sale.Metadata.RequestID,
+		&sale.Metadata.CorrelationID,
+		&sale.Metadata.TransactionID,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return paymentSale{}, errSaleNotFound
@@ -589,6 +603,7 @@ func (s *PostgresSalesStore) CheckInTicket(ctx context.Context, req CheckInTicke
 		TicketName:     ticket.TicketName,
 		CustomerID:     ticket.CustomerID,
 		CustomerName:   ticket.CustomerName,
+		Metadata:       storedSaleMetadata(ctx, ticket.Metadata, ticket.SaleID),
 	}
 
 	if err := tx.QueryRow(ctx, `
@@ -610,48 +625,56 @@ func (s *PostgresSalesStore) CheckInTicket(ctx context.Context, req CheckInTicke
 }
 
 func (s *PostgresSalesStore) RecordEmailEvent(ctx context.Context, req RecordEmailEventRequest) (RecordEmailEventResult, error) {
-	commandTag, err := s.db.Exec(ctx, `
-		UPDATE email_notifications
+	var metadata correlation.Metadata
+	err := s.db.QueryRow(ctx, `
+		UPDATE email_notifications en
 		SET status = CASE
 		        WHEN $2 = 'DELIVERED' THEN 'DELIVERED'
 		        WHEN $2 = 'OPENED' THEN 'OPENED'
 		        WHEN $2 = 'CLICKED' THEN 'CLICKED'
 		        WHEN $2 = 'BOUNCED' THEN 'BOUNCED'
-		        ELSE status
+		        ELSE en.status
 		    END,
 		    delivered_at = CASE
-		        WHEN $2 = 'DELIVERED' THEN COALESCE(delivered_at, $3)
-		        ELSE delivered_at
+		        WHEN $2 = 'DELIVERED' THEN COALESCE(en.delivered_at, $3)
+		        ELSE en.delivered_at
 		    END,
 		    opened_at = CASE
-		        WHEN $2 = 'OPENED' THEN COALESCE(opened_at, $3)
-		        ELSE opened_at
+		        WHEN $2 = 'OPENED' THEN COALESCE(en.opened_at, $3)
+		        ELSE en.opened_at
 		    END,
 		    clicked_at = CASE
-		        WHEN $2 = 'CLICKED' THEN COALESCE(clicked_at, $3)
-		        ELSE clicked_at
+		        WHEN $2 = 'CLICKED' THEN COALESCE(en.clicked_at, $3)
+		        ELSE en.clicked_at
 		    END,
 		    bounced_at = CASE
-		        WHEN $2 = 'BOUNCED' THEN COALESCE(bounced_at, $3)
-		        ELSE bounced_at
+		        WHEN $2 = 'BOUNCED' THEN COALESCE(en.bounced_at, $3)
+		        ELSE en.bounced_at
 		    END,
 		    provider_event_id = CASE
-		        WHEN $4 = '' THEN provider_event_id
-		        ELSE COALESCE(provider_event_id, $4)
+		        WHEN $4 = '' THEN en.provider_event_id
+		        ELSE COALESCE(en.provider_event_id, $4)
 		    END,
 		    error_message = CASE
 		        WHEN $2 = 'BOUNCED' AND $5 <> '' THEN $5
 		        WHEN $2 IN ('DELIVERED', 'OPENED', 'CLICKED') THEN NULL
-		        ELSE error_message
+		        ELSE en.error_message
 		    END,
 		    updated_at = NOW()
-		WHERE sale_id = $1
-	`, req.SaleID, req.EventType, req.OccurredAt.UTC(), req.ProviderEventID, req.Reason)
+		FROM sales s
+		WHERE en.sale_id = $1
+		  AND s.id = en.sale_id
+		RETURNING s.request_id, s.correlation_id, s.transaction_id
+	`, req.SaleID, req.EventType, req.OccurredAt.UTC(), req.ProviderEventID, req.Reason).Scan(
+		&metadata.RequestID,
+		&metadata.CorrelationID,
+		&metadata.TransactionID,
+	)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return RecordEmailEventResult{}, errSaleNotFound
+		}
 		return RecordEmailEventResult{}, err
-	}
-	if commandTag.RowsAffected() == 0 {
-		return RecordEmailEventResult{}, errSaleNotFound
 	}
 
 	status := req.EventType
@@ -664,6 +687,7 @@ func (s *PostgresSalesStore) RecordEmailEvent(ctx context.Context, req RecordEma
 		Status:          status,
 		ProviderEventID: req.ProviderEventID,
 		RecordedAt:      req.OccurredAt.UTC(),
+		Metadata:        storedSaleMetadata(ctx, metadata, req.SaleID),
 	}, nil
 }
 
@@ -677,12 +701,14 @@ type issuedTicketForCheckIn struct {
 	TicketName     string
 	CustomerID     string
 	CustomerName   string
+	Metadata       correlation.Metadata
 }
 
 func (s *PostgresSalesStore) getIssuedTicketForCheckIn(ctx context.Context, tx pgx.Tx, issuedTicketID string) (issuedTicketForCheckIn, error) {
 	var ticket issuedTicketForCheckIn
 	if err := tx.QueryRow(ctx, `
-		SELECT it.id, s.sales_event_id, s.id, s.status, p.status, t.id, t.name, c.id, c.name
+		SELECT it.id, s.sales_event_id, s.id, s.status, p.status, t.id, t.name, c.id, c.name,
+		       s.request_id, s.correlation_id, s.transaction_id
 		FROM issued_tickets it
 		JOIN sales s ON s.id = it.sale_id
 		JOIN payments p ON p.sale_id = s.id
@@ -700,6 +726,9 @@ func (s *PostgresSalesStore) getIssuedTicketForCheckIn(ctx context.Context, tx p
 		&ticket.TicketName,
 		&ticket.CustomerID,
 		&ticket.CustomerName,
+		&ticket.Metadata.RequestID,
+		&ticket.Metadata.CorrelationID,
+		&ticket.Metadata.TransactionID,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return issuedTicketForCheckIn{}, errIssuedTicketNotFound
@@ -707,4 +736,10 @@ func (s *PostgresSalesStore) getIssuedTicketForCheckIn(ctx context.Context, tx p
 		return issuedTicketForCheckIn{}, err
 	}
 	return ticket, nil
+}
+
+func storedSaleMetadata(ctx context.Context, metadata correlation.Metadata, saleID string) correlation.Metadata {
+	metadata = correlation.WithTransactionID(metadata, saleID)
+	current, _ := correlation.FromContext(ctx)
+	return correlation.Merge(metadata, current)
 }

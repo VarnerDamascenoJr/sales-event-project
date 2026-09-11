@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/varner/sales-event-project/internal/correlation"
 	"github.com/varner/sales-event-project/internal/events"
 	"github.com/varner/sales-event-project/internal/metrics"
 	"github.com/varner/sales-event-project/internal/observability"
@@ -64,7 +65,7 @@ func (p *Publisher) PublishPending(ctx context.Context, batchSize int) error {
 	}()
 
 	rows, err := tx.Query(ctx, `
-		SELECT event_id, event_type, payload, attempts, trace_context
+		SELECT event_id, event_type, payload, attempts, trace_context, request_id, correlation_id, transaction_id
 		FROM outbox_events
 		WHERE status IN ('PENDING', 'FAILED')
 		  AND published_at IS NULL
@@ -81,7 +82,16 @@ func (p *Publisher) PublishPending(ctx context.Context, batchSize int) error {
 	pending := make([]pendingEvent, 0, batchSize)
 	for rows.Next() {
 		var event pendingEvent
-		if err := rows.Scan(&event.ID, &event.Type, &event.Payload, &event.Attempts, &event.TraceContext); err != nil {
+		if err := rows.Scan(
+			&event.ID,
+			&event.Type,
+			&event.Payload,
+			&event.Attempts,
+			&event.TraceContext,
+			&event.Metadata.RequestID,
+			&event.Metadata.CorrelationID,
+			&event.Metadata.TransactionID,
+		); err != nil {
 			rows.Close()
 			return err
 		}
@@ -94,19 +104,23 @@ func (p *Publisher) PublishPending(ctx context.Context, batchSize int) error {
 	rows.Close()
 
 	for _, event := range pending {
+		eventCtx := observability.ContextWithTraceContext(ctx, event.TraceContext)
+		if event.Metadata != (correlation.Metadata{}) {
+			eventCtx = correlation.ContextWithMetadata(eventCtx, event.Metadata)
+		}
+
 		routingKey, ok := routingKeyForEventType(event.Type)
 		if !ok {
 			reason := fmt.Sprintf("outbox event type %q has no routing key", event.Type)
-			slog.Warn("outbox event type has no routing key", "event_id", event.ID, "event_type", event.Type)
+			slog.WarnContext(eventCtx, "outbox event type has no routing key", "event_id", event.ID, "event_type", event.Type)
 			if err := markFailed(ctx, tx, event, reason); err != nil {
 				return err
 			}
 			continue
 		}
 
-		eventCtx := observability.ContextWithTraceContext(ctx, event.TraceContext)
 		if err := p.broker.PublishJSON(eventCtx, routingKey, event.Payload); err != nil {
-			slog.Error("outbox event publish failed", "event_id", event.ID, "event_type", event.Type, "attempts", event.Attempts+1, "error", err)
+			slog.ErrorContext(eventCtx, "outbox event publish failed", "event_id", event.ID, "event_type", event.Type, "attempts", event.Attempts+1, "error", err)
 			if markErr := markFailed(ctx, tx, event, err.Error()); markErr != nil {
 				return markErr
 			}
@@ -116,7 +130,7 @@ func (p *Publisher) PublishPending(ctx context.Context, batchSize int) error {
 			return err
 		}
 		metrics.OutboxEventsProcessedTotal.WithLabelValues(event.Type, StatusPublished).Inc()
-		slog.Info("outbox event published", "event_id", event.ID, "event_type", event.Type, "routing_key", routingKey)
+		slog.InfoContext(eventCtx, "outbox event published", "event_id", event.ID, "event_type", event.Type, "routing_key", routingKey)
 	}
 
 	return tx.Commit(ctx)
@@ -128,6 +142,7 @@ type pendingEvent struct {
 	Payload      json.RawMessage
 	Attempts     int
 	TraceContext string
+	Metadata     correlation.Metadata
 }
 
 func routingKeyForEventType(eventType string) (string, bool) {

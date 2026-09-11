@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rabbitmq/amqp091-go"
+	"github.com/varner/sales-event-project/internal/correlation"
 	"github.com/varner/sales-event-project/internal/events"
 	"github.com/varner/sales-event-project/internal/metrics"
 	"github.com/varner/sales-event-project/internal/observability"
@@ -75,6 +76,11 @@ func (p *SalesProcessor) persistSale(ctx context.Context, event events.SaleCreat
 	for _, item := range event.Items {
 		totalAmount += item.Quantity * item.UnitPrice
 	}
+	metadata := correlation.WithTransactionID(correlation.Metadata{
+		RequestID:     event.Metadata.RequestID,
+		CorrelationID: event.Metadata.CorrelationID,
+		TransactionID: event.Metadata.TransactionID,
+	}, event.SaleID)
 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO customers (id, email, name, created_at, updated_at)
@@ -89,13 +95,16 @@ func (p *SalesProcessor) persistSale(ctx context.Context, event events.SaleCreat
 	}
 
 	_, err = tx.Exec(ctx, `
-		INSERT INTO sales (id, sales_event_id, customer_id, status, total_amount, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW())
+		INSERT INTO sales (id, sales_event_id, customer_id, status, total_amount, created_at, updated_at, request_id, correlation_id, transaction_id)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8, $9)
 		ON CONFLICT (id) DO UPDATE
 		SET status = EXCLUDED.status,
 		    total_amount = EXCLUDED.total_amount,
+		    request_id = COALESCE(NULLIF(sales.request_id, ''), EXCLUDED.request_id),
+		    correlation_id = COALESCE(NULLIF(sales.correlation_id, ''), EXCLUDED.correlation_id),
+		    transaction_id = COALESCE(NULLIF(sales.transaction_id, ''), EXCLUDED.transaction_id),
 		    updated_at = NOW()
-	`, event.SaleID, event.SalesEventID, event.CustomerID, status, totalAmount, event.OccurredAt)
+	`, event.SaleID, event.SalesEventID, event.CustomerID, status, totalAmount, event.OccurredAt, metadata.RequestID, metadata.CorrelationID, metadata.TransactionID)
 	if err != nil {
 		return err
 	}
@@ -143,10 +152,10 @@ func (p *SalesProcessor) persistSale(ctx context.Context, event events.SaleCreat
 		}
 
 		_, err = tx.Exec(ctx, `
-			INSERT INTO outbox_events (event_id, event_type, aggregate_id, payload, trace_context)
-			VALUES ($1, $2, $3, $4, $5)
+			INSERT INTO outbox_events (event_id, event_type, aggregate_id, payload, trace_context, request_id, correlation_id, transaction_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 			ON CONFLICT (event_id) DO NOTHING
-		`, event.EventID, statusEventName(status), event.SaleID, payload, observability.TraceContext(ctx))
+		`, event.EventID, statusEventName(status), event.SaleID, payload, observability.TraceContext(ctx), metadata.RequestID, metadata.CorrelationID, metadata.TransactionID)
 		if err != nil {
 			return err
 		}

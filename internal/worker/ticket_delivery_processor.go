@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rabbitmq/amqp091-go"
 	"github.com/skip2/go-qrcode"
+	"github.com/varner/sales-event-project/internal/correlation"
 	"github.com/varner/sales-event-project/internal/events"
 	"github.com/varner/sales-event-project/internal/metrics"
 	"github.com/varner/sales-event-project/internal/notification"
@@ -324,14 +325,15 @@ func (p *TicketDeliveryProcessor) RetryFailedEmails(ctx context.Context, batchSi
 	}()
 
 	rows, err := tx.Query(ctx, `
-		SELECT sale_id, attempts
-		FROM email_notifications
-		WHERE status = $1
-		  AND next_retry_at <= NOW()
-		  AND attempts < $2
-		ORDER BY updated_at ASC
+		SELECT en.sale_id, en.attempts, s.request_id, s.correlation_id, s.transaction_id
+		FROM email_notifications en
+		JOIN sales s ON s.id = en.sale_id
+		WHERE en.status = $1
+		  AND en.next_retry_at <= NOW()
+		  AND en.attempts < $2
+		ORDER BY en.updated_at ASC
 		LIMIT $3
-		FOR UPDATE SKIP LOCKED
+		FOR UPDATE OF en SKIP LOCKED
 	`, emailStatusFailed, maxEmailRetryAttempts, batchSize)
 	if err != nil {
 		return err
@@ -340,7 +342,13 @@ func (p *TicketDeliveryProcessor) RetryFailedEmails(ctx context.Context, batchSi
 	pending := make([]pendingEmailRetry, 0, batchSize)
 	for rows.Next() {
 		var retry pendingEmailRetry
-		if err := rows.Scan(&retry.SaleID, &retry.Attempts); err != nil {
+		if err := rows.Scan(
+			&retry.SaleID,
+			&retry.Attempts,
+			&retry.Metadata.RequestID,
+			&retry.Metadata.CorrelationID,
+			&retry.Metadata.TransactionID,
+		); err != nil {
 			rows.Close()
 			return err
 		}
@@ -353,29 +361,34 @@ func (p *TicketDeliveryProcessor) RetryFailedEmails(ctx context.Context, batchSi
 	rows.Close()
 
 	for _, retry := range pending {
-		email, err := p.loadRetryTicketEmail(ctx, tx, retry.SaleID)
+		retryCtx := ctx
+		if retry.Metadata != (correlation.Metadata{}) {
+			retryCtx = correlation.ContextWithMetadata(retryCtx, retry.Metadata)
+		}
+
+		email, err := p.loadRetryTicketEmail(retryCtx, tx, retry.SaleID)
 		if err != nil {
-			if markErr := p.markRetryFailed(ctx, tx, retry, err.Error()); markErr != nil {
+			if markErr := p.markRetryFailed(retryCtx, tx, retry, err.Error()); markErr != nil {
 				return markErr
 			}
 			metrics.TicketDeliveryTotal.WithLabelValues("retry_failed").Inc()
 			continue
 		}
 
-		if err := p.sender.SendTickets(ctx, *email); err != nil {
-			slog.Error("retry ticket email failed", "sale_id", retry.SaleID, "recipient", email.To, "attempts", retry.Attempts+1, "error", err)
-			if markErr := p.markRetryFailed(ctx, tx, retry, err.Error()); markErr != nil {
+		if err := p.sender.SendTickets(retryCtx, *email); err != nil {
+			slog.ErrorContext(retryCtx, "retry ticket email failed", "sale_id", retry.SaleID, "recipient", email.To, "attempts", retry.Attempts+1, "error", err)
+			if markErr := p.markRetryFailed(retryCtx, tx, retry, err.Error()); markErr != nil {
 				return markErr
 			}
 			metrics.TicketDeliveryTotal.WithLabelValues("retry_failed").Inc()
 			continue
 		}
 
-		if err := markTicketEmailSentTx(ctx, tx, retry.SaleID); err != nil {
+		if err := markTicketEmailSentTx(retryCtx, tx, retry.SaleID); err != nil {
 			return err
 		}
 		metrics.TicketDeliveryTotal.WithLabelValues("retry_sent").Inc()
-		slog.Info("retry ticket email delivered", "sale_id", retry.SaleID, "recipient", email.To)
+		slog.InfoContext(retryCtx, "retry ticket email delivered", "sale_id", retry.SaleID, "recipient", email.To)
 	}
 
 	return tx.Commit(ctx)
@@ -392,6 +405,7 @@ type retryTicketEmail struct {
 type pendingEmailRetry struct {
 	SaleID   string
 	Attempts int
+	Metadata correlation.Metadata
 }
 
 func (p *TicketDeliveryProcessor) loadRetryTicketEmail(ctx context.Context, tx pgx.Tx, saleID string) (*notification.TicketEmail, error) {

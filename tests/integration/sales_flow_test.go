@@ -42,38 +42,50 @@ func TestApprovedPaymentIssuesTicketsAndIsIdempotent(t *testing.T) {
 	defer db.Close()
 
 	beforeInventory := availableQuantity(t, ctx, db, generalTicketID)
-	saleID := createSale(t, salesFlowRequest{
+	requestID := "req-it-" + uuid.NewString()
+	correlationID := "corr-it-" + uuid.NewString()
+	saleID, createSaleHeaders := createSaleWithHeaders(t, salesFlowRequest{
 		CustomerID:    "customer-it-" + uuid.NewString(),
 		CustomerName:  "Integration Buyer",
 		CustomerEmail: fmt.Sprintf("buyer-%s@example.com", uuid.NewString()),
 		Quantity:      2,
+	}, map[string]string{
+		"X-Request-ID":     requestID,
+		"X-Correlation-ID": correlationID,
 	})
+	assertResponseCorrelation(t, createSaleHeaders, requestID, correlationID, saleID)
 
 	waitForSaleStatus(t, ctx, db, saleID, "PENDING_PAYMENT")
+	assertStoredCorrelation(t, saleCorrelation(t, ctx, db, saleID), requestID, correlationID, saleID)
 	if got := availableQuantity(t, ctx, db, generalTicketID); got != beforeInventory-2 {
 		t.Fatalf("expected inventory to decrease by 2 after reservation, before=%d got=%d", beforeInventory, got)
 	}
 
-	intent := createPaymentIntent(t, saleID, 2*generalTicketPrice)
+	intent, intentHeaders := createPaymentIntentWithHeaders(t, saleID, 2*generalTicketPrice)
 	if intent.Status != "PENDING" || intent.ID == "" {
 		t.Fatalf("unexpected payment intent response: %+v", intent)
 	}
+	assertResponseCorrelation(t, intentHeaders, requestID, correlationID, saleID)
 
-	payment := completePaymentByWebhook(t, intent.ID, saleID, 2*generalTicketPrice, "APPROVED")
+	payment, paymentHeaders := completePaymentByWebhookWithHeaders(t, intent.ID, saleID, 2*generalTicketPrice, "APPROVED")
 	if payment.SaleStatus != "COMPLETED" || payment.Payment.Status != "APPROVED" {
 		t.Fatalf("unexpected payment response: %+v", payment)
 	}
+	assertResponseCorrelation(t, paymentHeaders, requestID, correlationID, saleID)
+	assertStoredCorrelation(t, outboxCorrelation(t, ctx, db, saleID, "SALE_COMPLETED"), requestID, correlationID, saleID)
 
 	waitForIssuedTickets(t, ctx, db, saleID, 2)
 	waitForEmailStatus(t, ctx, db, saleID, "SENT")
-	recordEmailEvent(t, saleID, "OPENED", http.StatusAccepted)
+	emailEventHeaders := recordEmailEventWithHeaders(t, saleID, "OPENED", http.StatusAccepted)
+	assertResponseCorrelation(t, emailEventHeaders, requestID, correlationID, saleID)
 	waitForEmailStatus(t, ctx, db, saleID, "OPENED")
 
 	ticketCode := issuedTicketCode(t, ctx, db, saleID)
-	checkIn := checkInTicket(t, ticketCode, http.StatusCreated)
+	checkIn, checkInHeaders := checkInTicketWithHeaders(t, ticketCode, http.StatusCreated)
 	if checkIn.IssuedTicketID == "" || checkIn.SaleID != saleID {
 		t.Fatalf("unexpected check-in response: %+v", checkIn)
 	}
+	assertResponseCorrelation(t, checkInHeaders, requestID, correlationID, saleID)
 	checkInTicket(t, ticketCode, http.StatusConflict)
 
 	publishSaleCompleted(t, saleID)
@@ -160,7 +172,20 @@ type checkInResponse struct {
 	SaleID         string `json:"saleId"`
 }
 
+type correlationRecord struct {
+	RequestID     string
+	CorrelationID string
+	TransactionID string
+}
+
 func createSale(t *testing.T, req salesFlowRequest) string {
+	t.Helper()
+
+	response, _ := createSaleWithHeaders(t, req, nil)
+	return response
+}
+
+func createSaleWithHeaders(t *testing.T, req salesFlowRequest, headers map[string]string) (string, http.Header) {
 	t.Helper()
 
 	body := map[string]any{
@@ -178,11 +203,11 @@ func createSale(t *testing.T, req salesFlowRequest) string {
 	}
 
 	var response createSaleResponse
-	doJSON(t, http.MethodPost, apiBaseURL()+"/sales", body, http.StatusAccepted, &response)
+	responseHeaders := doJSONWithHeaders(t, http.MethodPost, apiBaseURL()+"/sales", body, http.StatusAccepted, &response, headers)
 	if response.SaleID == "" || response.Status != "PROCESSING" {
 		t.Fatalf("unexpected create sale response: %+v", response)
 	}
-	return response.SaleID
+	return response.SaleID, responseHeaders
 }
 
 func paySale(t *testing.T, saleID string, amount int, status string) paymentResponse {
@@ -204,17 +229,31 @@ func paySale(t *testing.T, saleID string, amount int, status string) paymentResp
 func createPaymentIntent(t *testing.T, saleID string, amount int) paymentIntentResponse {
 	t.Helper()
 
+	response, _ := createPaymentIntentWithHeaders(t, saleID, amount)
+	return response
+}
+
+func createPaymentIntentWithHeaders(t *testing.T, saleID string, amount int) (paymentIntentResponse, http.Header) {
+	t.Helper()
+
 	body := map[string]any{
 		"amount":   amount,
 		"provider": "integration_test",
 	}
 
 	var response paymentIntentResponse
-	doJSON(t, http.MethodPost, apiBaseURL()+"/sales/"+saleID+"/payment-intents", body, http.StatusAccepted, &response)
-	return response
+	headers := doJSON(t, http.MethodPost, apiBaseURL()+"/sales/"+saleID+"/payment-intents", body, http.StatusAccepted, &response)
+	return response, headers
 }
 
 func completePaymentByWebhook(t *testing.T, paymentIntentID string, saleID string, amount int, status string) paymentResponse {
+	t.Helper()
+
+	response, _ := completePaymentByWebhookWithHeaders(t, paymentIntentID, saleID, amount, status)
+	return response
+}
+
+func completePaymentByWebhookWithHeaders(t *testing.T, paymentIntentID string, saleID string, amount int, status string) (paymentResponse, http.Header) {
 	t.Helper()
 
 	body := map[string]any{
@@ -254,10 +293,17 @@ func completePaymentByWebhook(t *testing.T, paymentIntentID string, saleID strin
 	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
 		t.Fatalf("decode payment webhook response: %v", err)
 	}
-	return decoded
+	return decoded, response.Header.Clone()
 }
 
 func checkInTicket(t *testing.T, ticketCode string, expectedStatus int) checkInResponse {
+	t.Helper()
+
+	response, _ := checkInTicketWithHeaders(t, ticketCode, expectedStatus)
+	return response
+}
+
+func checkInTicketWithHeaders(t *testing.T, ticketCode string, expectedStatus int) (checkInResponse, http.Header) {
 	t.Helper()
 
 	body := map[string]any{
@@ -269,10 +315,10 @@ func checkInTicket(t *testing.T, ticketCode string, expectedStatus int) checkInR
 	if expectedStatus == http.StatusCreated {
 		target = &response
 	}
-	doJSONWithHeaders(t, http.MethodPost, apiBaseURL()+"/sales-events/"+salesEventID+"/check-ins", body, expectedStatus, target, map[string]string{
+	headers := doJSONWithHeaders(t, http.MethodPost, apiBaseURL()+"/sales-events/"+salesEventID+"/check-ins", body, expectedStatus, target, map[string]string{
 		"X-API-Key": checkInAPIKey,
 	})
-	return response
+	return response, headers
 }
 
 func publishSaleCompleted(t *testing.T, saleID string) {
@@ -302,6 +348,12 @@ func publishSaleCompleted(t *testing.T, saleID string) {
 func recordEmailEvent(t *testing.T, saleID string, eventType string, expectedStatus int) {
 	t.Helper()
 
+	recordEmailEventWithHeaders(t, saleID, eventType, expectedStatus)
+}
+
+func recordEmailEventWithHeaders(t *testing.T, saleID string, eventType string, expectedStatus int) http.Header {
+	t.Helper()
+
 	body := map[string]any{
 		"saleId":          saleID,
 		"eventType":       eventType,
@@ -309,7 +361,7 @@ func recordEmailEvent(t *testing.T, saleID string, eventType string, expectedSta
 		"providerEventId": uuid.NewString(),
 	}
 
-	doJSONWithHeaders(t, http.MethodPost, apiBaseURL()+"/webhooks/email-events", body, expectedStatus, nil, map[string]string{
+	return doJSONWithHeaders(t, http.MethodPost, apiBaseURL()+"/webhooks/email-events", body, expectedStatus, nil, map[string]string{
 		"X-Webhook-Secret": emailWebhookSecret,
 	})
 }
@@ -320,12 +372,12 @@ func signWebhookPayload(payload []byte, secret string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-func doJSON(t *testing.T, method string, url string, body any, expectedStatus int, target any) {
+func doJSON(t *testing.T, method string, url string, body any, expectedStatus int, target any) http.Header {
 	t.Helper()
-	doJSONWithHeaders(t, method, url, body, expectedStatus, target, nil)
+	return doJSONWithHeaders(t, method, url, body, expectedStatus, target, nil)
 }
 
-func doJSONWithHeaders(t *testing.T, method string, url string, body any, expectedStatus int, target any, headers map[string]string) {
+func doJSONWithHeaders(t *testing.T, method string, url string, body any, expectedStatus int, target any, headers map[string]string) http.Header {
 	t.Helper()
 
 	payload, err := json.Marshal(body)
@@ -363,6 +415,7 @@ func doJSONWithHeaders(t *testing.T, method string, url string, body any, expect
 			t.Fatalf("decode response body %q: %v", string(responseBody), err)
 		}
 	}
+	return response.Header.Clone()
 }
 
 func connectDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
@@ -413,6 +466,63 @@ func issuedTicketCode(t *testing.T, ctx context.Context, db *pgxpool.Pool, saleI
 		t.Fatalf("query issued ticket payload: %v", err)
 	}
 	return payload
+}
+
+func saleCorrelation(t *testing.T, ctx context.Context, db *pgxpool.Pool, saleID string) correlationRecord {
+	t.Helper()
+
+	var record correlationRecord
+	if err := db.QueryRow(ctx, `
+		SELECT request_id, correlation_id, transaction_id
+		FROM sales
+		WHERE id = $1
+	`, saleID).Scan(&record.RequestID, &record.CorrelationID, &record.TransactionID); err != nil {
+		t.Fatalf("query sale correlation: %v", err)
+	}
+	return record
+}
+
+func outboxCorrelation(t *testing.T, ctx context.Context, db *pgxpool.Pool, saleID string, eventType string) correlationRecord {
+	t.Helper()
+
+	var record correlationRecord
+	if err := db.QueryRow(ctx, `
+		SELECT request_id, correlation_id, transaction_id
+		FROM outbox_events
+		WHERE aggregate_id = $1
+		  AND event_type = $2
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, saleID, eventType).Scan(&record.RequestID, &record.CorrelationID, &record.TransactionID); err != nil {
+		t.Fatalf("query outbox correlation: %v", err)
+	}
+	return record
+}
+
+func assertStoredCorrelation(t *testing.T, record correlationRecord, requestID string, correlationID string, transactionID string) {
+	t.Helper()
+	if record.RequestID != requestID {
+		t.Fatalf("expected stored request id %q, got %q", requestID, record.RequestID)
+	}
+	if record.CorrelationID != correlationID {
+		t.Fatalf("expected stored correlation id %q, got %q", correlationID, record.CorrelationID)
+	}
+	if record.TransactionID != transactionID {
+		t.Fatalf("expected stored transaction id %q, got %q", transactionID, record.TransactionID)
+	}
+}
+
+func assertResponseCorrelation(t *testing.T, headers http.Header, requestID string, correlationID string, transactionID string) {
+	t.Helper()
+	if headers.Get("X-Request-ID") != requestID {
+		t.Fatalf("expected response request id %q, got %q", requestID, headers.Get("X-Request-ID"))
+	}
+	if headers.Get("X-Correlation-ID") != correlationID {
+		t.Fatalf("expected response correlation id %q, got %q", correlationID, headers.Get("X-Correlation-ID"))
+	}
+	if headers.Get("X-Transaction-ID") != transactionID {
+		t.Fatalf("expected response transaction id %q, got %q", transactionID, headers.Get("X-Transaction-ID"))
+	}
 }
 
 func waitForSaleStatus(t *testing.T, ctx context.Context, db *pgxpool.Pool, saleID string, expected string) {

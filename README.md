@@ -365,6 +365,8 @@ Consultas úteis no Grafana Explore:
 {service="worker"} |= "ticket email delivered"
 {service="email-retry-worker"} |= "retry ticket email"
 {service="worker"} | json | sale_id="generated-sale-uuid"
+{service=~"api|worker|email-retry-worker"} | json | correlation_id="corr-generated-uuid"
+{service=~"api|worker|email-retry-worker"} | json | transaction_id="sale-uuid"
 ```
 
 Consultas úteis em Prometheus:

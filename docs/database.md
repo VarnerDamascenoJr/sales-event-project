@@ -55,7 +55,8 @@
 - PK: `id UUID`
 - FK: `sales_event_id -> sales_events(id)`
 - FK: `customer_id -> customers(id)`
-- campos: `status`, `total_amount`, `created_at`, `updated_at`
+- campos: `status`, `total_amount`, `request_id`, `correlation_id`,
+  `transaction_id`, `created_at`, `updated_at`
 
 ### `sale_items`
 
@@ -128,6 +129,10 @@
   - `attempts`
   - `last_error`
   - `next_attempt_at`
+  - `trace_context`
+  - `request_id`
+  - `correlation_id`
+  - `transaction_id`
   - `published_at`
   - `created_at`
 
@@ -162,6 +167,8 @@
 - `idx_email_notifications_status_next_retry_at`
 - `idx_email_notifications_provider_event_id` parcial
 - `idx_payment_intents_status`
+- `idx_sales_correlation_id` parcial
+- `idx_outbox_events_correlation_id` parcial
 
 ## Regras de duplicidade e idempotência
 
