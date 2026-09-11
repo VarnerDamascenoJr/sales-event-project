@@ -19,6 +19,7 @@ import (
 	"github.com/varner/sales-event-project/internal/metrics"
 	"github.com/varner/sales-event-project/internal/observability"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type RouterDeps struct {
@@ -272,7 +273,17 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			return
 		}
 
-		result, err := deps.Store.RecordEmailEvent(c.Request.Context(), recordReq)
+		requestCtx, emailSpan := observability.StartBusinessSpan(c.Request.Context(), "email.event.record",
+			attribute.String("sale.id", recordReq.SaleID),
+			attribute.String("email.event_type", recordReq.EventType),
+			attribute.String("email.provider_event_id", recordReq.ProviderEventID),
+		)
+		result, err := deps.Store.RecordEmailEvent(requestCtx, recordReq)
+		if err == nil {
+			emailSpan.SetAttributes(observability.CorrelationAttributes(correlation.ContextWithMetadata(requestCtx, result.Metadata))...)
+			emailSpan.SetAttributes(attribute.String("email.status", result.Status))
+		}
+		observability.EndSpan(emailSpan, err)
 		if err != nil {
 			status := http.StatusBadRequest
 			switch {
@@ -319,7 +330,19 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			return
 		}
 
-		result, err := deps.Store.ProcessPaymentWebhook(c.Request.Context(), paymentReq)
+		requestCtx, paymentSpan := observability.StartBusinessSpan(c.Request.Context(), "payment.webhook.process",
+			attribute.String("sale.id", paymentReq.SaleID),
+			attribute.String("payment.intent.id", paymentReq.PaymentIntentID),
+			attribute.String("payment.provider", paymentReq.Provider),
+			attribute.String("payment.status", paymentReq.Status),
+			attribute.Int("payment.amount", paymentReq.Amount),
+		)
+		result, err := deps.Store.ProcessPaymentWebhook(requestCtx, paymentReq)
+		if err == nil {
+			paymentSpan.SetAttributes(observability.CorrelationAttributes(correlation.ContextWithMetadata(requestCtx, result.Metadata))...)
+			paymentSpan.SetAttributes(attribute.String("sale.status", result.SaleStatus))
+		}
+		observability.EndSpan(paymentSpan, err)
 		if err != nil {
 			status := http.StatusBadRequest
 			switch {
@@ -432,6 +455,15 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		saleID := uuid.NewString()
 		correlationMetadata := requestCorrelationMetadata(c, saleID)
 		requestContext := correlation.ContextWithMetadata(c.Request.Context(), correlationMetadata)
+		requestContext, saleSpan := observability.StartBusinessSpan(requestContext, "sale.accept",
+			attribute.String("sale.id", saleID),
+			attribute.String("sales_event.id", req.SalesEventID),
+			attribute.Int("sale.items.count", len(req.Items)),
+		)
+		var saleErr error
+		defer func() {
+			observability.EndSpan(saleSpan, saleErr)
+		}()
 		event := events.SaleCreated{
 			EventID:       uuid.NewString(),
 			EventType:     "SALE_CREATED",
@@ -454,6 +486,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		}
 
 		if err := deps.Broker.PublishJSON(requestContext, events.SaleCreatedRoutingKey, event); err != nil {
+			saleErr = err
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "could not enqueue sale"})
 			return
 		}
@@ -488,7 +521,18 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			return
 		}
 
-		intent, err := deps.Store.CreatePaymentIntent(c.Request.Context(), intentReq)
+		requestCtx, paymentSpan := observability.StartBusinessSpan(c.Request.Context(), "payment.intent.create",
+			attribute.String("sale.id", intentReq.SaleID),
+			attribute.String("payment.provider", intentReq.Provider),
+			attribute.Int("payment.amount", intentReq.Amount),
+		)
+		intent, err := deps.Store.CreatePaymentIntent(requestCtx, intentReq)
+		if err == nil {
+			paymentSpan.SetAttributes(append(observability.CorrelationAttributes(correlation.ContextWithMetadata(requestCtx, intent.Metadata)),
+				attribute.String("payment.intent.id", intent.ID),
+			)...)
+		}
+		observability.EndSpan(paymentSpan, err)
 		if err != nil {
 			status := http.StatusBadRequest
 			switch {
@@ -537,7 +581,18 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			return
 		}
 
-		result, err := deps.Store.ProcessPayment(c.Request.Context(), paymentReq)
+		requestCtx, paymentSpan := observability.StartBusinessSpan(c.Request.Context(), "payment.process",
+			attribute.String("sale.id", paymentReq.SaleID),
+			attribute.String("payment.provider", paymentReq.Provider),
+			attribute.String("payment.status", paymentReq.Status),
+			attribute.Int("payment.amount", paymentReq.Amount),
+		)
+		result, err := deps.Store.ProcessPayment(requestCtx, paymentReq)
+		if err == nil {
+			paymentSpan.SetAttributes(observability.CorrelationAttributes(correlation.ContextWithMetadata(requestCtx, result.Metadata))...)
+			paymentSpan.SetAttributes(attribute.String("sale.status", result.SaleStatus))
+		}
+		observability.EndSpan(paymentSpan, err)
 		if err != nil {
 			status := http.StatusBadRequest
 			switch {
@@ -585,7 +640,17 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			return
 		}
 
-		result, err := deps.Store.CheckInTicket(c.Request.Context(), checkInReq)
+		requestCtx, checkInSpan := observability.StartBusinessSpan(c.Request.Context(), "ticket.check_in",
+			attribute.String("sales_event.id", checkInReq.SalesEventID),
+		)
+		result, err := deps.Store.CheckInTicket(requestCtx, checkInReq)
+		if err == nil {
+			checkInSpan.SetAttributes(append(observability.CorrelationAttributes(correlation.ContextWithMetadata(requestCtx, result.Metadata)),
+				attribute.String("sale.id", result.SaleID),
+				attribute.String("ticket.issued.id", result.IssuedTicketID),
+			)...)
+		}
+		observability.EndSpan(checkInSpan, err)
 		if err != nil {
 			status := http.StatusBadRequest
 			switch {

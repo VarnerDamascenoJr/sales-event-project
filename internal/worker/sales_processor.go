@@ -12,6 +12,7 @@ import (
 	"github.com/varner/sales-event-project/internal/events"
 	"github.com/varner/sales-event-project/internal/metrics"
 	"github.com/varner/sales-event-project/internal/observability"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type SalesProcessor struct {
@@ -31,13 +32,24 @@ func (p *SalesProcessor) Handle(ctx context.Context, delivery amqp091.Delivery) 
 		return err
 	}
 	ctx = contextWithEventMetadata(ctx, event.Metadata)
+	ctx, span := observability.StartBusinessSpan(ctx, "sale.reserve",
+		attribute.String("sale.id", event.SaleID),
+		attribute.String("sales_event.id", event.SalesEventID),
+		attribute.Int("sale.items.count", len(event.Items)),
+	)
+	var spanErr error
+	defer func() {
+		observability.EndSpan(span, spanErr)
+	}()
 
 	status := events.SalePendingPaymentStatus
 	if len(event.Items) == 0 {
 		status = events.SaleFailedStatus
 	}
+	span.SetAttributes(attribute.String("sale.status", status))
 
 	if err := p.persistSale(ctx, event, status); err != nil {
+		spanErr = err
 		metrics.WorkerSalesProcessedTotal.WithLabelValues(events.SaleFailedStatus).Inc()
 		return err
 	}
@@ -56,16 +68,29 @@ func (p *SalesProcessor) Handle(ctx context.Context, delivery amqp091.Delivery) 
 }
 
 func (p *SalesProcessor) persistSale(ctx context.Context, event events.SaleCreated, status string) error {
+	ctx, span := observability.StartBusinessSpan(ctx, "sale.persist",
+		attribute.String("sale.id", event.SaleID),
+		attribute.String("sales_event.id", event.SalesEventID),
+		attribute.String("sale.status", status),
+	)
+	var spanErr error
+	defer func() {
+		observability.EndSpan(span, spanErr)
+	}()
+
 	alreadyProcessed, err := p.saleAlreadyProcessed(ctx, event.SaleID)
 	if err != nil {
+		spanErr = err
 		return err
 	}
 	if alreadyProcessed {
+		span.SetAttributes(attribute.Bool("sale.already_processed", true))
 		return nil
 	}
 
 	tx, err := p.db.Begin(ctx)
 	if err != nil {
+		spanErr = err
 		return err
 	}
 	defer func() {
@@ -91,6 +116,7 @@ func (p *SalesProcessor) persistSale(ctx context.Context, event events.SaleCreat
 		    updated_at = NOW()
 	`, event.CustomerID, event.CustomerEmail, event.CustomerName)
 	if err != nil {
+		spanErr = err
 		return err
 	}
 
@@ -106,9 +132,11 @@ func (p *SalesProcessor) persistSale(ctx context.Context, event events.SaleCreat
 		    updated_at = NOW()
 	`, event.SaleID, event.SalesEventID, event.CustomerID, status, totalAmount, event.OccurredAt, metadata.RequestID, metadata.CorrelationID, metadata.TransactionID)
 	if err != nil {
+		spanErr = err
 		return err
 	}
 
+	span.SetAttributes(attribute.Int("sale.total_amount", totalAmount))
 	for _, item := range event.Items {
 		result, err := tx.Exec(ctx, `
 			UPDATE tickets
@@ -117,9 +145,11 @@ func (p *SalesProcessor) persistSale(ctx context.Context, event events.SaleCreat
 			  AND available_quantity >= $1
 		`, item.Quantity, item.TicketID)
 		if err != nil {
+			spanErr = err
 			return err
 		}
 		if result.RowsAffected() == 0 {
+			spanErr = errInsufficientTickets
 			return errInsufficientTickets
 		}
 
@@ -129,6 +159,7 @@ func (p *SalesProcessor) persistSale(ctx context.Context, event events.SaleCreat
 			ON CONFLICT DO NOTHING
 		`, event.SaleID, item.TicketID, item.Quantity, item.UnitPrice)
 		if err != nil {
+			spanErr = err
 			return err
 		}
 	}
@@ -142,26 +173,40 @@ func (p *SalesProcessor) persistSale(ctx context.Context, event events.SaleCreat
 		    processed_at = NOW()
 	`, event.SaleID, paymentStatusForSale(status), totalAmount, "pending")
 	if err != nil {
+		spanErr = err
 		return err
 	}
 
 	if status == events.SaleFailedStatus {
 		payload, err := json.Marshal(event)
 		if err != nil {
+			spanErr = err
 			return err
 		}
 
+		outboxCtx, outboxSpan := observability.StartBusinessSpan(ctx, "outbox.enqueue",
+			attribute.String("outbox.event.id", event.EventID),
+			attribute.String("outbox.event.type", statusEventName(status)),
+			attribute.String("sale.id", event.SaleID),
+		)
 		_, err = tx.Exec(ctx, `
 			INSERT INTO outbox_events (event_id, event_type, aggregate_id, payload, trace_context, request_id, correlation_id, transaction_id)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 			ON CONFLICT (event_id) DO NOTHING
-		`, event.EventID, statusEventName(status), event.SaleID, payload, observability.TraceContext(ctx), metadata.RequestID, metadata.CorrelationID, metadata.TransactionID)
+		`, event.EventID, statusEventName(status), event.SaleID, payload, observability.TraceContext(outboxCtx), metadata.RequestID, metadata.CorrelationID, metadata.TransactionID)
 		if err != nil {
+			observability.EndSpan(outboxSpan, err)
+			spanErr = err
 			return err
 		}
+		observability.EndSpan(outboxSpan, nil)
 	}
 
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		spanErr = err
+		return err
+	}
+	return nil
 }
 
 func (p *SalesProcessor) saleAlreadyProcessed(ctx context.Context, saleID string) (bool, error) {
