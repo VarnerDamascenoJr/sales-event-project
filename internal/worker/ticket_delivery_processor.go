@@ -17,6 +17,8 @@ import (
 	"github.com/varner/sales-event-project/internal/events"
 	"github.com/varner/sales-event-project/internal/metrics"
 	"github.com/varner/sales-event-project/internal/notification"
+	"github.com/varner/sales-event-project/internal/observability"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type TicketDeliveryProcessor struct {
@@ -69,20 +71,38 @@ func (p *TicketDeliveryProcessor) Handle(ctx context.Context, delivery amqp091.D
 		return err
 	}
 	ctx = contextWithEventMetadata(ctx, event.Metadata)
+	ctx, span := observability.StartBusinessSpan(ctx, "ticket.delivery",
+		attribute.String("sale.id", event.SaleID),
+		attribute.String("sales_event.id", event.SalesEventID),
+	)
+	var spanErr error
+	defer func() {
+		observability.EndSpan(span, spanErr)
+	}()
 
 	start := time.Now()
 	ticketEmail, err := p.prepareTicketEmail(ctx, event.SaleID)
 	if err != nil {
+		spanErr = err
 		metrics.TicketDeliveryTotal.WithLabelValues("failed").Inc()
 		return err
 	}
 	if ticketEmail == nil {
+		span.SetAttributes(attribute.String("ticket.delivery.status", "skipped"))
 		metrics.TicketDeliveryTotal.WithLabelValues("skipped").Inc()
 		slog.InfoContext(ctx, "ticket delivery skipped", "sale_id", event.SaleID)
 		return nil
 	}
+	span.SetAttributes(attribute.Int("ticket.issued.count", len(ticketEmail.Tickets)))
 
-	if err := p.sender.SendTickets(ctx, *ticketEmail); err != nil {
+	emailCtx, emailSpan := observability.StartBusinessSpan(ctx, "email.send",
+		attribute.String("sale.id", event.SaleID),
+		attribute.Int("ticket.issued.count", len(ticketEmail.Tickets)),
+	)
+	err = p.sender.SendTickets(emailCtx, *ticketEmail)
+	observability.EndSpan(emailSpan, err)
+	if err != nil {
+		spanErr = err
 		metrics.TicketDeliveryTotal.WithLabelValues("failed").Inc()
 		slog.ErrorContext(ctx, "send ticket email failed", "sale_id", event.SaleID, "recipient", ticketEmail.To, "error", err)
 		if markErr := p.markTicketEmailFailed(ctx, event.SaleID, err); markErr != nil {
@@ -92,9 +112,11 @@ func (p *TicketDeliveryProcessor) Handle(ctx context.Context, delivery amqp091.D
 	}
 
 	if err := p.markTicketEmailSent(ctx, event.SaleID); err != nil {
+		spanErr = err
 		metrics.TicketDeliveryTotal.WithLabelValues("failed").Inc()
 		return err
 	}
+	span.SetAttributes(attribute.String("ticket.delivery.status", "sent"))
 
 	metrics.TicketDeliveryTotal.WithLabelValues("sent").Inc()
 	metrics.IssuedTicketsTotal.Add(float64(len(ticketEmail.Tickets)))
@@ -109,8 +131,15 @@ func (p *TicketDeliveryProcessor) Handle(ctx context.Context, delivery amqp091.D
 }
 
 func (p *TicketDeliveryProcessor) prepareTicketEmail(ctx context.Context, saleID string) (*notification.TicketEmail, error) {
+	ctx, span := observability.StartBusinessSpan(ctx, "ticket.email.prepare", attribute.String("sale.id", saleID))
+	var spanErr error
+	defer func() {
+		observability.EndSpan(span, spanErr)
+	}()
+
 	tx, err := p.db.Begin(ctx)
 	if err != nil {
+		spanErr = err
 		return nil, err
 	}
 	defer func() {
@@ -119,23 +148,37 @@ func (p *TicketDeliveryProcessor) prepareTicketEmail(ctx context.Context, saleID
 
 	sale, err := p.getCompletedSale(ctx, tx, saleID)
 	if err != nil {
+		spanErr = err
 		return nil, err
 	}
 	if sale.Status != events.SaleCompletedStatus {
-		return nil, tx.Commit(ctx)
+		span.SetAttributes(attribute.String("ticket.delivery.status", "skipped"), attribute.String("sale.status", sale.Status))
+		if err := tx.Commit(ctx); err != nil {
+			spanErr = err
+			return nil, err
+		}
+		return nil, nil
 	}
 	alreadySent, err := p.ticketEmailAlreadySent(ctx, tx, sale.ID)
 	if err != nil {
+		spanErr = err
 		return nil, err
 	}
 	if alreadySent {
-		return nil, tx.Commit(ctx)
+		span.SetAttributes(attribute.String("ticket.delivery.status", "already_sent"))
+		if err := tx.Commit(ctx); err != nil {
+			spanErr = err
+			return nil, err
+		}
+		return nil, nil
 	}
 
 	issuedTickets, err := p.issueTickets(ctx, tx, sale)
 	if err != nil {
+		spanErr = err
 		return nil, err
 	}
+	span.SetAttributes(attribute.Int("ticket.issued.count", len(issuedTickets)))
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO email_notifications (sale_id, recipient_email, status, created_at, updated_at)
@@ -150,10 +193,12 @@ func (p *TicketDeliveryProcessor) prepareTicketEmail(ctx context.Context, saleID
 		    error_message = NULL,
 		    updated_at = NOW()
 	`, sale.ID, sale.CustomerEmail); err != nil {
+		spanErr = err
 		return nil, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
+		spanErr = err
 		return nil, err
 	}
 
@@ -215,6 +260,12 @@ func (p *TicketDeliveryProcessor) getCompletedSale(ctx context.Context, tx pgx.T
 }
 
 func (p *TicketDeliveryProcessor) issueTickets(ctx context.Context, tx pgx.Tx, sale completedSale) ([]notification.IssuedTicket, error) {
+	ctx, span := observability.StartBusinessSpan(ctx, "ticket.issue", attribute.String("sale.id", sale.ID))
+	var spanErr error
+	defer func() {
+		observability.EndSpan(span, spanErr)
+	}()
+
 	rows, err := tx.Query(ctx, `
 		SELECT si.ticket_id, t.name, si.quantity
 		FROM sale_items si
@@ -223,6 +274,7 @@ func (p *TicketDeliveryProcessor) issueTickets(ctx context.Context, tx pgx.Tx, s
 		ORDER BY si.created_at ASC
 	`, sale.ID)
 	if err != nil {
+		spanErr = err
 		return nil, err
 	}
 	defer rows.Close()
@@ -231,11 +283,13 @@ func (p *TicketDeliveryProcessor) issueTickets(ctx context.Context, tx pgx.Tx, s
 	for rows.Next() {
 		var item completedSaleItem
 		if err := rows.Scan(&item.TicketID, &item.TicketName, &item.Quantity); err != nil {
+			spanErr = err
 			return nil, err
 		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
+		spanErr = err
 		return nil, err
 	}
 
@@ -246,6 +300,7 @@ func (p *TicketDeliveryProcessor) issueTickets(ctx context.Context, tx pgx.Tx, s
 			qrPayload := fmt.Sprintf("issued_ticket:%s", issuedTicketID)
 			qrCodePNG, err := qrcode.Encode(qrPayload, qrcode.Medium, 256)
 			if err != nil {
+				spanErr = err
 				return nil, err
 			}
 
@@ -254,6 +309,7 @@ func (p *TicketDeliveryProcessor) issueTickets(ctx context.Context, tx pgx.Tx, s
 				VALUES ($1, $2, $3, $4, $5, $6)
 				ON CONFLICT (sale_id, ticket_id, sequence) DO NOTHING
 			`, issuedTicketID, sale.ID, item.TicketID, sale.CustomerID, sequence, qrPayload); err != nil {
+				spanErr = err
 				return nil, err
 			}
 
@@ -266,6 +322,7 @@ func (p *TicketDeliveryProcessor) issueTickets(ctx context.Context, tx pgx.Tx, s
 		}
 	}
 
+	span.SetAttributes(attribute.Int("ticket.issued.count", len(issuedTickets)))
 	return issuedTickets, nil
 }
 
@@ -365,30 +422,49 @@ func (p *TicketDeliveryProcessor) RetryFailedEmails(ctx context.Context, batchSi
 		if retry.Metadata != (correlation.Metadata{}) {
 			retryCtx = correlation.ContextWithMetadata(retryCtx, retry.Metadata)
 		}
+		retryCtx, retrySpan := observability.StartBusinessSpan(retryCtx, "email.retry",
+			attribute.String("sale.id", retry.SaleID),
+			attribute.Int("email.retry.attempts", retry.Attempts+1),
+		)
+		var retryErr error
 
 		email, err := p.loadRetryTicketEmail(retryCtx, tx, retry.SaleID)
 		if err != nil {
+			retryErr = err
 			if markErr := p.markRetryFailed(retryCtx, tx, retry, err.Error()); markErr != nil {
+				observability.EndSpan(retrySpan, markErr)
 				return markErr
 			}
 			metrics.TicketDeliveryTotal.WithLabelValues("retry_failed").Inc()
+			observability.EndSpan(retrySpan, retryErr)
 			continue
 		}
 
-		if err := p.sender.SendTickets(retryCtx, *email); err != nil {
+		emailCtx, emailSpan := observability.StartBusinessSpan(retryCtx, "email.send.retry",
+			attribute.String("sale.id", retry.SaleID),
+			attribute.Int("ticket.issued.count", len(email.Tickets)),
+		)
+		err = p.sender.SendTickets(emailCtx, *email)
+		observability.EndSpan(emailSpan, err)
+		if err != nil {
+			retryErr = err
 			slog.ErrorContext(retryCtx, "retry ticket email failed", "sale_id", retry.SaleID, "recipient", email.To, "attempts", retry.Attempts+1, "error", err)
 			if markErr := p.markRetryFailed(retryCtx, tx, retry, err.Error()); markErr != nil {
+				observability.EndSpan(retrySpan, markErr)
 				return markErr
 			}
 			metrics.TicketDeliveryTotal.WithLabelValues("retry_failed").Inc()
+			observability.EndSpan(retrySpan, retryErr)
 			continue
 		}
 
 		if err := markTicketEmailSentTx(retryCtx, tx, retry.SaleID); err != nil {
+			observability.EndSpan(retrySpan, err)
 			return err
 		}
 		metrics.TicketDeliveryTotal.WithLabelValues("retry_sent").Inc()
 		slog.InfoContext(retryCtx, "retry ticket email delivered", "sale_id", retry.SaleID, "recipient", email.To)
+		observability.EndSpan(retrySpan, nil)
 	}
 
 	return tx.Commit(ctx)

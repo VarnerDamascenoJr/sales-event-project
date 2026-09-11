@@ -13,6 +13,7 @@ import (
 	"github.com/varner/sales-event-project/internal/correlation"
 	"github.com/varner/sales-event-project/internal/events"
 	"github.com/varner/sales-event-project/internal/observability"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type PostgresSalesStore struct {
@@ -367,29 +368,50 @@ func (s *PostgresSalesStore) ProcessPaymentWebhook(ctx context.Context, req Proc
 }
 
 func (s *PostgresSalesStore) processPaymentTx(ctx context.Context, tx pgx.Tx, req ProcessPaymentRequest, paymentStatus string, occurredAt time.Time) (ProcessPaymentResult, error) {
+	ctx, span := observability.StartBusinessSpan(ctx, "payment.persist",
+		attribute.String("sale.id", req.SaleID),
+		attribute.String("payment.provider", req.Provider),
+		attribute.String("payment.status", paymentStatus),
+		attribute.Int("payment.amount", req.Amount),
+	)
+	var spanErr error
+	defer func() {
+		observability.EndSpan(span, spanErr)
+	}()
+
 	sale, err := s.getSaleForPayment(ctx, tx, req.SaleID)
 	if err != nil {
+		spanErr = err
 		return ProcessPaymentResult{}, err
 	}
 	if sale.Status == events.SaleCompletedStatus {
+		spanErr = errSaleAlreadyPaid
 		return ProcessPaymentResult{}, errSaleAlreadyPaid
 	}
 	if sale.Status != events.SalePendingPaymentStatus {
+		spanErr = errSaleCannotBePaid
 		return ProcessPaymentResult{}, errSaleCannotBePaid
 	}
 	if req.Amount != sale.TotalAmount {
-		return ProcessPaymentResult{}, errValidation("amount does not match sale total amount")
+		spanErr = errValidation("amount does not match sale total amount")
+		return ProcessPaymentResult{}, spanErr
 	}
 
 	metadata := storedSaleMetadata(ctx, sale.Metadata, req.SaleID)
 	ctx = correlation.ContextWithMetadata(ctx, metadata)
+	span.SetAttributes(observability.CorrelationAttributes(ctx)...)
 	saleStatus := events.SaleCompletedStatus
 	if paymentStatus == events.PaymentFailedStatus {
 		saleStatus = events.SaleFailedStatus
 		if err := s.releaseReservedTickets(ctx, tx, req.SaleID); err != nil {
+			spanErr = err
 			return ProcessPaymentResult{}, err
 		}
 	}
+	span.SetAttributes(
+		attribute.String("sales_event.id", sale.SalesEventID),
+		attribute.String("sale.status", saleStatus),
+	)
 
 	processedAt := time.Now().UTC()
 	if !occurredAt.IsZero() {
@@ -412,6 +434,7 @@ func (s *PostgresSalesStore) processPaymentTx(ctx context.Context, tx pgx.Tx, re
 		&payment.Provider,
 		&payment.ProcessedAt,
 	); err != nil {
+		spanErr = err
 		return ProcessPaymentResult{}, err
 	}
 
@@ -421,21 +444,31 @@ func (s *PostgresSalesStore) processPaymentTx(ctx context.Context, tx pgx.Tx, re
 		    updated_at = NOW()
 		WHERE id = $1
 	`, req.SaleID, saleStatus); err != nil {
+		spanErr = err
 		return ProcessPaymentResult{}, err
 	}
 
 	eventID := uuid.NewString()
 	payload, err := paymentOutboxPayload(eventID, sale.SalesEventID, req, paymentStatus, saleStatus, processedAt, metadata)
 	if err != nil {
+		spanErr = err
 		return ProcessPaymentResult{}, err
 	}
 
+	outboxCtx, outboxSpan := observability.StartBusinessSpan(ctx, "outbox.enqueue",
+		attribute.String("outbox.event.id", eventID),
+		attribute.String("outbox.event.type", saleStatusEventName(saleStatus)),
+		attribute.String("sale.id", req.SaleID),
+	)
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO outbox_events (event_id, event_type, aggregate_id, payload, trace_context, request_id, correlation_id, transaction_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, eventID, saleStatusEventName(saleStatus), req.SaleID, payload, observability.TraceContext(ctx), metadata.RequestID, metadata.CorrelationID, metadata.TransactionID); err != nil {
+	`, eventID, saleStatusEventName(saleStatus), req.SaleID, payload, observability.TraceContext(outboxCtx), metadata.RequestID, metadata.CorrelationID, metadata.TransactionID); err != nil {
+		observability.EndSpan(outboxSpan, err)
+		spanErr = err
 		return ProcessPaymentResult{}, err
 	}
+	observability.EndSpan(outboxSpan, nil)
 
 	return ProcessPaymentResult{
 		SaleID:       req.SaleID,

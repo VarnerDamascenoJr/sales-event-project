@@ -96,10 +96,20 @@ func ConnectWithRetry(ctx context.Context, url, exchange string, queues map[stri
 
 func (r *RabbitMQ) PublishJSON(ctx context.Context, routingKey string, value any) error {
 	ctx, span := otel.Tracer("github.com/varner/sales-event-project/messaging").Start(ctx, "rabbitmq publish "+routingKey)
-	defer span.End()
-	span.SetAttributes(attribute.String("messaging.destination.name", r.exchange), attribute.String("messaging.rabbitmq.routing_key", routingKey))
+	span.SetAttributes(append(observability.CorrelationAttributes(ctx),
+		attribute.String("messaging.system", "rabbitmq"),
+		attribute.String("messaging.operation", "publish"),
+		attribute.String("messaging.destination.name", r.exchange),
+		attribute.String("messaging.rabbitmq.routing_key", routingKey),
+	)...)
+	var publishErr error
+	defer func() {
+		observability.EndSpan(span, publishErr)
+	}()
+
 	body, err := json.Marshal(value)
 	if err != nil {
+		publishErr = err
 		return err
 	}
 
@@ -112,6 +122,7 @@ func (r *RabbitMQ) PublishJSON(ctx context.Context, routingKey string, value any
 		Headers:      headers,
 		Body:         body,
 	}); err != nil {
+		publishErr = err
 		metrics.EventPublishedTotal.WithLabelValues(routingKey, "failed").Inc()
 		return err
 	}

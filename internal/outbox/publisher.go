@@ -3,6 +3,7 @@ package outbox
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/varner/sales-event-project/internal/events"
 	"github.com/varner/sales-event-project/internal/metrics"
 	"github.com/varner/sales-event-project/internal/observability"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 const (
@@ -108,29 +110,41 @@ func (p *Publisher) PublishPending(ctx context.Context, batchSize int) error {
 		if event.Metadata != (correlation.Metadata{}) {
 			eventCtx = correlation.ContextWithMetadata(eventCtx, event.Metadata)
 		}
+		eventCtx, span := observability.StartBusinessSpan(eventCtx, "outbox.publish",
+			attribute.String("outbox.event.id", event.ID),
+			attribute.String("outbox.event.type", event.Type),
+			attribute.Int("outbox.event.attempts", event.Attempts+1),
+		)
 
 		routingKey, ok := routingKeyForEventType(event.Type)
 		if !ok {
 			reason := fmt.Sprintf("outbox event type %q has no routing key", event.Type)
 			slog.WarnContext(eventCtx, "outbox event type has no routing key", "event_id", event.ID, "event_type", event.Type)
 			if err := markFailed(ctx, tx, event, reason); err != nil {
+				observability.EndSpan(span, err)
 				return err
 			}
+			observability.EndSpan(span, errors.New(reason))
 			continue
 		}
+		span.SetAttributes(attribute.String("messaging.rabbitmq.routing_key", routingKey))
 
 		if err := p.broker.PublishJSON(eventCtx, routingKey, event.Payload); err != nil {
 			slog.ErrorContext(eventCtx, "outbox event publish failed", "event_id", event.ID, "event_type", event.Type, "attempts", event.Attempts+1, "error", err)
 			if markErr := markFailed(ctx, tx, event, err.Error()); markErr != nil {
+				observability.EndSpan(span, markErr)
 				return markErr
 			}
+			observability.EndSpan(span, err)
 			continue
 		}
 		if err := markPublished(ctx, tx, event.ID); err != nil {
+			observability.EndSpan(span, err)
 			return err
 		}
 		metrics.OutboxEventsProcessedTotal.WithLabelValues(event.Type, StatusPublished).Inc()
 		slog.InfoContext(eventCtx, "outbox event published", "event_id", event.ID, "event_type", event.Type, "routing_key", routingKey)
+		observability.EndSpan(span, nil)
 	}
 
 	return tx.Commit(ctx)
