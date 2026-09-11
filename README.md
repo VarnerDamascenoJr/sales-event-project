@@ -434,6 +434,26 @@ Estrutura atual:
 - `SALE_COMPLETED`: registrado na outbox e publicado no RabbitMQ quando o pagamento é aprovado.
 - `SALE_FAILED`: registrado na outbox quando a reserva ou pagamento falha.
 
+Contrato de contexto RabbitMQ:
+
+- Headers AMQP:
+  - `x-request-id`
+  - `x-correlation-id`
+  - `x-transaction-id`
+- Payload:
+  - `SALE_CREATED` inclui `metadata.requestId`, `metadata.correlationId` e
+    `metadata.transactionId`.
+  - `SALE_COMPLETED` inclui o mesmo bloco `metadata` recuperado da venda.
+  - `SALE_FAILED` inclui `metadata` no payload persistido na outbox.
+- Trace context:
+  - quando OpenTelemetry esta ativo, o publisher injeta headers W3C como
+    `traceparent`/`baggage`; o worker extrai esses headers antes de processar a
+    mensagem.
+
+O worker monta o contexto dos logs combinando headers AMQP e payload. Headers
+recebidos tem precedencia; campos ausentes sao preenchidos pelo `metadata` do
+payload.
+
 ## Outbox com retry
 
 Eventos em `outbox_events` usam estado para publicação confiável:

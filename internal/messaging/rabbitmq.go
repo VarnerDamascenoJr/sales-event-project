@@ -103,13 +103,7 @@ func (r *RabbitMQ) PublishJSON(ctx context.Context, routingKey string, value any
 		return err
 	}
 
-	headers := amqp091.Table{}
-	observability.InjectAMQPContext(ctx, headers)
-	if metadata, ok := correlation.FromContext(ctx); ok {
-		headers[correlation.AMQPRequestIDHeader] = metadata.RequestID
-		headers[correlation.AMQPCorrelationIDHeader] = metadata.CorrelationID
-		headers[correlation.AMQPTransactionIDHeader] = metadata.TransactionID
-	}
+	headers := publishingHeaders(ctx)
 
 	if err := r.channel.PublishWithContext(ctx, r.exchange, routingKey, false, false, amqp091.Publishing{
 		ContentType:  "application/json",
@@ -124,6 +118,23 @@ func (r *RabbitMQ) PublishJSON(ctx context.Context, routingKey string, value any
 
 	metrics.EventPublishedTotal.WithLabelValues(routingKey, "published").Inc()
 	return nil
+}
+
+func publishingHeaders(ctx context.Context) amqp091.Table {
+	headers := amqp091.Table{}
+	observability.InjectAMQPContext(ctx, headers)
+	if metadata, ok := correlation.FromContext(ctx); ok {
+		if metadata.RequestID != "" {
+			headers[correlation.AMQPRequestIDHeader] = metadata.RequestID
+		}
+		if metadata.CorrelationID != "" {
+			headers[correlation.AMQPCorrelationIDHeader] = metadata.CorrelationID
+		}
+		if metadata.TransactionID != "" {
+			headers[correlation.AMQPTransactionIDHeader] = metadata.TransactionID
+		}
+	}
+	return headers
 }
 
 func (r *RabbitMQ) Consume(queue string) (<-chan amqp091.Delivery, error) {
