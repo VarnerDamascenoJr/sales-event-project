@@ -314,9 +314,10 @@ func (s *PostgresSalesStore) ProcessPaymentWebhook(ctx context.Context, req Proc
 
 	if sale.Status == events.SaleCompletedStatus && req.Status == events.PaymentApprovedStatus {
 		return ProcessPaymentResult{
-			SaleID:       sale.ID,
-			SalesEventID: sale.SalesEventID,
-			SaleStatus:   sale.Status,
+			SaleID:           sale.ID,
+			SalesEventID:     sale.SalesEventID,
+			SaleStatus:       sale.Status,
+			IdempotentReplay: true,
 			Payment: PaymentDTO{
 				Status:      req.Status,
 				Amount:      req.Amount,
@@ -328,9 +329,10 @@ func (s *PostgresSalesStore) ProcessPaymentWebhook(ctx context.Context, req Proc
 	}
 	if sale.Status == events.SaleFailedStatus && req.Status == events.PaymentFailedStatus {
 		return ProcessPaymentResult{
-			SaleID:       sale.ID,
-			SalesEventID: sale.SalesEventID,
-			SaleStatus:   sale.Status,
+			SaleID:           sale.ID,
+			SalesEventID:     sale.SalesEventID,
+			SaleStatus:       sale.Status,
+			IdempotentReplay: true,
 			Payment: PaymentDTO{
 				Status:      req.Status,
 				Amount:      req.Amount,
