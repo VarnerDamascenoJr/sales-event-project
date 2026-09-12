@@ -50,10 +50,11 @@ Onde olhar:
 
 ### Venda falhou, mas não há efeito assíncrono observável
 
-- `Fato confirmado`: `SALE_FAILED` é gravado/publicado, porém o bootstrap atual não declara fila para `sale.failed`.
+- `Fato confirmado`: `SALE_FAILED` é gravado na outbox, porém o bootstrap atual não declara fila para `sale.failed`.
 - efeito prático:
-  - o evento pode ser marcado como publicado sem consumidor interno.
-  - isso não é o mesmo que cair em `sales.dlq`; sem binding no routing key, o publish pode simplesmente não ter destino observável pela aplicação.
+  - o evento não é marcado como `PUBLISHED` sem rota confirmada;
+  - o RabbitMQ devolve a mensagem, a outbox grava `last_error` e agenda retry;
+  - após o limite de tentativas, o evento vira `DEAD_LETTER`.
 
 ### Ticket não foi enviado por email
 
