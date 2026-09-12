@@ -341,6 +341,7 @@ Métricas principais:
 - `http_request_duration_seconds`
 - `sales_created_total`
 - `payments_processed_total`
+- `payment_webhook_replays_total`
 - `events_published_total`
 - `outbox_events_processed_total`
 - `worker_sales_processed_total`
@@ -348,6 +349,7 @@ Métricas principais:
 - `worker_message_processing_duration_seconds`
 - `ticket_delivery_total`
 - `issued_tickets_total`
+- `check_ins_created_total`
 
 Logs:
 
@@ -355,6 +357,8 @@ Logs:
 - Campos sensiveis como email/recipient/segredos sao redigidos nos logs.
 - Promtail coleta logs dos containers Docker e envia para Loki.
 - Grafana tem datasources de Prometheus e Loki provisionados.
+- Dashboard de jornada de negocio: `http://localhost:3000/d/sales-business-journey/sales-business-journey`.
+- Roteiro do dashboard: `docs/business-journey-dashboard.md`.
 
 Consultas úteis no Grafana Explore:
 
@@ -373,6 +377,7 @@ Consultas úteis em Prometheus:
 
 ```promql
 sum by (status, provider) (payments_processed_total)
+sum by (status, provider) (payment_webhook_replays_total)
 sum by (status) (ticket_delivery_total)
 sum by (queue, status) (worker_messages_processed_total)
 histogram_quantile(0.95, sum by (le, queue) (rate(worker_message_processing_duration_seconds_bucket[5m])))
