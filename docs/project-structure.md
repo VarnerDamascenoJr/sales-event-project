@@ -65,6 +65,9 @@
 
 - `scripts/git-hooks/pre-commit`
   - roda `make lint-fix` e `make test`, e falha se houver diff depois da execução.
+- `scripts/run-failure-scenarios.sh`
+  - executa cenarios controlados de falha para demonstrar pagamento duplicado,
+    consumidor atrasado, email em `DEAD_LETTER` e retry/dead-letter da outbox.
 
 ## Arquivos arquiteturalmente relevantes
 

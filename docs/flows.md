@@ -170,7 +170,8 @@ sequenceDiagram
 ### Risco relevante
 
 - `Fato confirmado`: `SALE_FAILED` vai para outbox, mas não há fila declarada/bindada para `sale.failed`.
-- `Fato confirmado`: o publish não usa publisher confirms nem `mandatory=true`, então um evento pode ser marcado como publicado sem rota válida no broker.
+- `Fato confirmado`: sem binding para `sale.failed`, o RabbitMQ devolve a
+  mensagem e a outbox mantém o evento em retry até `DEAD_LETTER`.
 
 ## Fluxo 4: publicação da outbox
 
@@ -194,9 +195,11 @@ sequenceDiagram
 4. Retry
    - em falha incrementa `attempts`, grava `last_error` e agenda `next_attempt_at`;
    - após 5 tentativas vira `DEAD_LETTER`.
-5. Risco relevante
-   - `PublishJSON` considera sucesso quando `channel.PublishWithContext` não retorna erro;
-   - o código não confirma se havia fila ligada ao routing key.
+5. Confirmacao de publicacao
+   - `PublishJSON` usa publisher confirms e `mandatory=true`;
+   - `basic.return`, `nack` ou timeout de contexto viram erro;
+   - a outbox so marca `PUBLISHED` quando o broker confirma e a mensagem nao e
+     devolvida por falta de rota.
 
 ## Fluxo 5: pagamento manual por API key
 
