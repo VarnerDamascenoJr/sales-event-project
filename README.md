@@ -465,6 +465,12 @@ Eventos em `outbox_events` usam estado para publicação confiável:
 
 O worker tenta publicar eventos `PENDING` ou `FAILED` com `next_attempt_at <= NOW()`. Em caso de falha, incrementa `attempts`, grava `last_error` e agenda novo retry com backoff exponencial, limitado a 1 hora. Depois de 5 tentativas, o evento vira `DEAD_LETTER`.
 
+Publicacoes RabbitMQ usam publisher confirms e `mandatory=true`. A outbox so marca
+um evento como `PUBLISHED` depois que o broker confirma a publicacao e a mensagem
+nao e devolvida por falta de rota. Se o broker responder com `nack`, se a mensagem
+for retornada como nao roteavel ou se a confirmacao expirar pelo contexto, o evento
+permanece em fluxo de retry e pode chegar a `DEAD_LETTER`.
+
 ## Próximos passos naturais
 
 - Criar cenário controlado para exercitar o `email-retry-worker` com SMTP falho.
