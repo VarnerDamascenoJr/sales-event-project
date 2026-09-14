@@ -141,11 +141,12 @@ type RecordEmailEventRequest struct {
 }
 
 type ProcessPaymentResult struct {
-	SaleID       string               `json:"saleId"`
-	SalesEventID string               `json:"salesEventId"`
-	SaleStatus   string               `json:"saleStatus"`
-	Payment      PaymentDTO           `json:"payment"`
-	Metadata     correlation.Metadata `json:"-"`
+	SaleID           string               `json:"saleId"`
+	SalesEventID     string               `json:"salesEventId"`
+	SaleStatus       string               `json:"saleStatus"`
+	Payment          PaymentDTO           `json:"payment"`
+	Metadata         correlation.Metadata `json:"-"`
+	IdempotentReplay bool                 `json:"-"`
 }
 
 type CheckInTicketResult struct {
@@ -362,6 +363,9 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 
 		correlation.WriteHTTPHeaders(c.Writer.Header(), result.Metadata)
 		metrics.PaymentsProcessedTotal.WithLabelValues(result.Payment.Status, result.Payment.Provider).Inc()
+		if result.IdempotentReplay {
+			metrics.PaymentWebhookReplaysTotal.WithLabelValues(result.Payment.Status, result.Payment.Provider).Inc()
+		}
 		logFields := append(correlation.LogFields(result.Metadata),
 			"sale_id", result.SaleID,
 			"sales_event_id", result.SalesEventID,
@@ -369,6 +373,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			"sale_status", result.SaleStatus,
 			"provider", result.Payment.Provider,
 			"amount", result.Payment.Amount,
+			"idempotent_replay", result.IdempotentReplay,
 		)
 		slog.Info("payment webhook processed", logFields...)
 		c.JSON(http.StatusAccepted, result)
@@ -669,6 +674,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		}
 
 		correlation.WriteHTTPHeaders(c.Writer.Header(), result.Metadata)
+		metrics.CheckInsCreatedTotal.Inc()
 		logFields := append(correlation.LogFields(result.Metadata),
 			"check_in_id", result.CheckInID,
 			"issued_ticket_id", result.IssuedTicketID,

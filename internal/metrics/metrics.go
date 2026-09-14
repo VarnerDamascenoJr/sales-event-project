@@ -52,6 +52,11 @@ var (
 		Help: "Total number of payments processed by the API.",
 	}, []string{"status", "provider"})
 
+	PaymentWebhookReplaysTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "payment_webhook_replays_total",
+		Help: "Total number of idempotent payment webhook replays.",
+	}, []string{"status", "provider"})
+
 	WorkerMessagesProcessedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "worker_messages_processed_total",
 		Help: "Total number of worker messages processed.",
@@ -71,6 +76,11 @@ var (
 	IssuedTicketsTotal = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "issued_tickets_total",
 		Help: "Total number of issued tickets generated.",
+	})
+
+	CheckInsCreatedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "check_ins_created_total",
+		Help: "Total number of successful ticket check-ins.",
 	})
 
 	RetentionDeletedRowsTotal = promauto.NewCounterVec(prometheus.CounterOpts{

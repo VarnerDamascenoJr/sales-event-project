@@ -59,7 +59,7 @@
 - `promtail`
   - configuração de coleta de logs Docker.
 - `grafana`
-  - provisioning de datasource e dashboard.
+  - provisioning de datasources e dashboards, incluindo a jornada de negocio.
 
 ### `scripts/`
 

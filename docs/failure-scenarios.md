@@ -52,6 +52,15 @@ curl -s http://localhost:9091/metrics | grep -E 'outbox_events_processed_total|w
 curl -s http://localhost:9092/metrics | grep ticket_delivery_total
 ```
 
+
+Open the business journey dashboard after running a scenario:
+
+```text
+http://localhost:3000/d/sales-business-journey/sales-business-journey
+```
+
+The dashboard smoke roteiro is documented in `docs/business-journey-dashboard.md`.
+
 Stop the environment:
 
 ```bash

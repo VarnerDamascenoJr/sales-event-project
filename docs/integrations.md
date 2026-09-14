@@ -37,8 +37,8 @@
   - declara `sales.dlq`;
   - conecta com retry no startup.
 - Publicação:
-  - usa `PublishWithContext` com `mandatory=false`;
-  - o código não habilita publisher confirms.
+  - usa `PublishWithContext` com `mandatory=true`;
+  - habilita publisher confirms e trata `nack`/mensagem nao roteavel como erro.
 - Retry:
   - `ConnectWithRetry(..., 20, 2*time.Second)`.
 - Impacto de indisponibilidade:
@@ -141,5 +141,5 @@
 
 - `Fato confirmado`: `sale.failed` não tem fila declarada/bindada.
 - `Fato confirmado`: mensagens falhas podem acabar em `sales.dlq`, mas não há consumidor nem procedimento automatizado para reprocessamento.
-- `Fato confirmado`: um publish sem erro não garante que a mensagem tinha rota válida; isso afeta especialmente `sale.failed`, que hoje não tem binding declarado.
+- `Fato confirmado`: `sale.failed` continua sem binding declarado no ambiente local, mas a publicacao obrigatoria agora transforma a falta de rota em retry/dead-letter da outbox.
 - `Fato confirmado`: o servidor de métricas do worker fica exposto em `0.0.0.0` em `development` por default.
