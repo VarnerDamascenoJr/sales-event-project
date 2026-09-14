@@ -416,6 +416,17 @@ make test-integration
 
 Esse teste sobe `postgres`, `rabbitmq`, `migrate`, `api` e `worker`, aplica as migrations versionadas, cria uma venda real, aguarda a reserva assíncrona, cria a intencao de pagamento, confirma o pagamento por webhook assinado, aguarda emissão de tickets/QR Code, valida o check-in e verifica que o mesmo QR Code nao entra duas vezes. Ele também cobre falha de pagamento restaurando estoque.
 
+Rodar cenarios controlados de falha para demonstracao operacional:
+
+```bash
+scripts/run-failure-scenarios.sh
+```
+
+O roteiro cobre pagamento duplicado, consumidor atrasado, falha persistente de
+email e retry/dead-letter da outbox. Consulte
+[`docs/failure-scenarios.md`](docs/failure-scenarios.md) para rodar cenarios
+individuais e conferir as evidencias esperadas.
+
 Aplicar migrations manualmente:
 
 ```bash
@@ -473,4 +484,4 @@ permanece em fluxo de retry e pode chegar a `DEAD_LETTER`.
 
 ## Próximos passos naturais
 
-- Criar cenário controlado para exercitar o `email-retry-worker` com SMTP falho.
+- Preparar dashboards com foco em jornada de negocio e falhas controladas.

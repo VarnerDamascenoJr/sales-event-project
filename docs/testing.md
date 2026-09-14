@@ -40,7 +40,6 @@
 - `Fato confirmado`: não há testes unitários dedicados para:
   - `internal/worker/sales_processor.go`;
   - `internal/httpapi/sales_store.go` em nível de store/SQL;
-  - `internal/messaging/rabbitmq.go`;
   - `internal/notification/mailer.go`;
   - `internal/observability/logging.go`.
 - `Inferência`: boa parte das regras transacionais está concentrada no store PostgreSQL e depende principalmente do teste de integração para cobertura real.
