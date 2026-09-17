@@ -61,6 +61,8 @@ services:
       PUBLIC_RATE_LIMIT_BURST: ${PUBLIC_RATE_LIMIT_BURST:-10}
       OTEL_ENABLED: ${OTEL_ENABLED:-false}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      OTEL_SERVICE_NAME: sales-event-api
+      OTEL_SERVICE_NAMESPACE: ${OTEL_SERVICE_NAMESPACE:-portfolio}
     ports:
       - "8080:8080"
     networks:
@@ -98,6 +100,8 @@ services:
       RETENTION_SENT_EMAIL_MAX_AGE: ${RETENTION_SENT_EMAIL_MAX_AGE:-2160h}
       OTEL_ENABLED: ${OTEL_ENABLED:-false}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      OTEL_SERVICE_NAME: sales-event-worker
+      OTEL_SERVICE_NAMESPACE: ${OTEL_SERVICE_NAMESPACE:-portfolio}
     ports:
       - "9091:9091"
     networks:
@@ -128,6 +132,8 @@ services:
       EMAIL_RETRY_INTERVAL: ${EMAIL_RETRY_INTERVAL:-1m}
       OTEL_ENABLED: ${OTEL_ENABLED:-false}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      OTEL_SERVICE_NAME: sales-event-email-retry-worker
+      OTEL_SERVICE_NAMESPACE: ${OTEL_SERVICE_NAMESPACE:-portfolio}
     ports:
       - "9092:9092"
     networks:

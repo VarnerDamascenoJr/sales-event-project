@@ -16,19 +16,20 @@ import (
 
 func main() {
 	cfg := config.Load()
+	serviceName := cfg.TelemetryServiceName("sales-event-email-retry-worker")
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	shutdownTelemetry := func(context.Context) error { return nil }
 	if cfg.OTelEnabled {
 		var err error
-		shutdownTelemetry, err = observability.ConfigureTelemetry(ctx, "sales-event-email-retry-worker", cfg.AppEnv, cfg.OTelEndpoint)
+		shutdownTelemetry, err = observability.ConfigureTelemetry(ctx, serviceName, cfg.OTelServiceNamespace, cfg.AppEnv, cfg.OTelEndpoint)
 		if err != nil {
 			slog.Error("configure telemetry failed", "error", err)
 			os.Exit(1)
 		}
 	} else {
-		observability.ConfigureLogger("sales-event-email-retry-worker", cfg.AppEnv)
+		observability.ConfigureLogger(serviceName, cfg.AppEnv)
 	}
 	defer func() { _ = shutdownTelemetry(context.Background()) }()
 

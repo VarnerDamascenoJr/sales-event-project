@@ -7,6 +7,9 @@ import (
 
 	"github.com/rabbitmq/amqp091-go"
 	"github.com/varner/sales-event-project/internal/correlation"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 func TestPublishingHeadersIncludesCorrelationMetadata(t *testing.T) {
@@ -45,6 +48,34 @@ func TestPublishingHeadersOmitEmptyCorrelationValues(t *testing.T) {
 	}
 	if _, ok := headers[correlation.AMQPTransactionIDHeader]; ok {
 		t.Fatal("expected empty transaction id to be omitted")
+	}
+}
+
+func TestPublishingHeadersIncludesTraceContext(t *testing.T) {
+	previous := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() {
+		otel.SetTextMapPropagator(previous)
+	})
+
+	traceID, err := oteltrace.TraceIDFromHex("4bf92f3577b34da6a3ce929d0e0e4736")
+	if err != nil {
+		t.Fatalf("parse trace id: %v", err)
+	}
+	spanID, err := oteltrace.SpanIDFromHex("00f067aa0ba902b7")
+	if err != nil {
+		t.Fatalf("parse span id: %v", err)
+	}
+	ctx := oteltrace.ContextWithSpanContext(context.Background(), oteltrace.NewSpanContext(oteltrace.SpanContextConfig{
+		TraceID:    traceID,
+		SpanID:     spanID,
+		TraceFlags: oteltrace.FlagsSampled,
+	}))
+
+	headers := publishingHeaders(ctx)
+
+	if got := headers["traceparent"]; got != "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" {
+		t.Fatalf("expected traceparent header, got %q", got)
 	}
 }
 

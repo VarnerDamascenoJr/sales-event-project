@@ -39,6 +39,8 @@ type Config struct {
 	RetentionSentEmailMaxAge    time.Duration
 	OTelEnabled                 bool
 	OTelEndpoint                string
+	OTelServiceName             string
+	OTelServiceNamespace        string
 }
 
 func Load() Config {
@@ -75,7 +77,16 @@ func Load() Config {
 		RetentionSentEmailMaxAge:    getDurationEnv("RETENTION_SENT_EMAIL_MAX_AGE", 90*24*time.Hour),
 		OTelEnabled:                 getBoolEnv("OTEL_ENABLED", false),
 		OTelEndpoint:                getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318"),
+		OTelServiceName:             getEnv("OTEL_SERVICE_NAME", ""),
+		OTelServiceNamespace:        getEnv("OTEL_SERVICE_NAMESPACE", "portfolio"),
 	}
+}
+
+func (c Config) TelemetryServiceName(defaultName string) string {
+	if c.OTelServiceName == "" {
+		return defaultName
+	}
+	return c.OTelServiceName
 }
 
 func getEnv(key, fallback string) string {

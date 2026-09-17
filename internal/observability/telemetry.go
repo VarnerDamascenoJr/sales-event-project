@@ -28,12 +28,16 @@ import (
 const instrumentationName = "github.com/varner/sales-event-project"
 
 // ConfigureTelemetry configures all three telemetry signals for an application process.
-func ConfigureTelemetry(ctx context.Context, service string, environment string, endpoint string) (func(context.Context) error, error) {
+func ConfigureTelemetry(ctx context.Context, service string, namespace string, environment string, endpoint string) (func(context.Context) error, error) {
 	endpoint = strings.TrimRight(endpoint, "/")
-	resource := resource.NewWithAttributes("",
+	resourceAttrs := []attribute.KeyValue{
 		attribute.String("service.name", service),
 		attribute.String("deployment.environment.name", environment),
-	)
+	}
+	if strings.TrimSpace(namespace) != "" {
+		resourceAttrs = append(resourceAttrs, attribute.String("service.namespace", namespace))
+	}
+	resource := resource.NewWithAttributes("", resourceAttrs...)
 
 	traceExporter, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(endpoint+"/v1/traces"))
 	if err != nil {
