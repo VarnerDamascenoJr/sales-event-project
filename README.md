@@ -50,6 +50,10 @@ Para a demonstracao integrada do portfolio, use a plataforma
 suba este projeto com OTEL apontando para o Collector compartilhado. O roteiro
 esta em
 [`docs/observability-platform-integration.md`](docs/observability-platform-integration.md).
+O guia final de execucao local dos tres projetos esta em
+[`portfolio-local-execution.md`](https://github.com/VarnerDamascenoJr/OptiFlow/blob/main/docs/portfolio-local-execution.md),
+e os diagramas finais estao em
+[`portfolio-architecture-diagrams.md`](https://github.com/VarnerDamascenoJr/OptiFlow/blob/main/docs/portfolio-architecture-diagrams.md).
 O export de dados para o OptiFlow esta em
 [`docs/optiflow-export.md`](docs/optiflow-export.md).
 
