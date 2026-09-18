@@ -22,6 +22,7 @@ logs e traces. A fonte de verdade esta no documento
 - `cmd/api`: API HTTP em Gin. Valida a venda, publica `SALE_CREATED`, cria intents de pagamento, recebe webhooks assinados de pagamento e grava eventos na outbox.
 - `cmd/worker`: consumidor RabbitMQ e publicador de outbox. Processa `SALE_CREATED`, reserva ingressos, publica eventos pendentes da outbox, consome `SALE_COMPLETED`, emite tickets únicos com QR Code e tenta enviar o email ao comprador.
 - `cmd/email-retry-worker`: worker dedicado ao retry de notificacoes de email com status `FAILED`.
+- `cmd/optiflow-export`: exportador de historico operacional para cenarios do OptiFlow.
 - `migrations`: migrations versionadas para schema e seed local.
 - `deployments/prometheus`: configuração de scrape da API, do worker e do worker de retry de email.
 - `deployments/loki` e `deployments/promtail`: coleta e armazenamento de logs dos containers.
@@ -49,6 +50,8 @@ Para a demonstracao integrada do portfolio, use a plataforma
 suba este projeto com OTEL apontando para o Collector compartilhado. O roteiro
 esta em
 [`docs/observability-platform-integration.md`](docs/observability-platform-integration.md).
+O export de dados para o OptiFlow esta em
+[`docs/optiflow-export.md`](docs/optiflow-export.md).
 
 ## Criar venda
 
