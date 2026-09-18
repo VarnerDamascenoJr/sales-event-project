@@ -1,0 +1,42 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Test, lint and integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Create shared observability network
+        run: docker network create operational-observability-network || true
+
+      - name: Run unit tests
+        run: make test
+
+      - name: Run lint
+        run: make lint
+
+      - name: Run integration test
+        run: make test-integration
+
+      - name: Build images
+        run: make build
+
+      - name: Print service logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Stop stack
+        if: always()
+        run: docker compose down --volumes
