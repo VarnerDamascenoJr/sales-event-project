@@ -44,6 +44,12 @@ Serviços principais:
 - Loki: `http://localhost:3100`
 - Grafana: `http://localhost:3000` (`admin` / `admin`)
 
+Para a demonstracao integrada do portfolio, use a plataforma
+`operational-observability-platform` como backend de Tempo/Loki/Prometheus e
+suba este projeto com OTEL apontando para o Collector compartilhado. O roteiro
+esta em
+[`docs/observability-platform-integration.md`](docs/observability-platform-integration.md).
+
 ## Criar venda
 
 As migrations já criam um evento publicado e dois tickets para teste local.

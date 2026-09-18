@@ -20,17 +20,18 @@ import (
 
 func main() {
 	cfg := config.Load()
+	serviceName := cfg.TelemetryServiceName("sales-event-api")
 	ctx := context.Background()
 	shutdownTelemetry := func(context.Context) error { return nil }
 	if cfg.OTelEnabled {
 		var err error
-		shutdownTelemetry, err = observability.ConfigureTelemetry(ctx, "sales-event-api", cfg.AppEnv, cfg.OTelEndpoint)
+		shutdownTelemetry, err = observability.ConfigureTelemetry(ctx, serviceName, cfg.OTelServiceNamespace, cfg.AppEnv, cfg.OTelEndpoint)
 		if err != nil {
 			slog.Error("configure telemetry failed", "error", err)
 			os.Exit(1)
 		}
 	} else {
-		observability.ConfigureLogger("sales-event-api", cfg.AppEnv)
+		observability.ConfigureLogger(serviceName, cfg.AppEnv)
 	}
 	defer func() { _ = shutdownTelemetry(context.Background()) }()
 
