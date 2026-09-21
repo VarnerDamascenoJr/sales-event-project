@@ -1,5 +1,7 @@
 # Sales Event Project
 
+[![Continuous Integration](https://github.com/VarnerDamascenoJr/sales-event-project/actions/workflows/ci.yml/badge.svg)](https://github.com/VarnerDamascenoJr/sales-event-project/actions/workflows/ci.yml)
+
 Backend moderno em Go usando Gin, RabbitMQ, PostgreSQL, Prometheus, Loki e Grafana.
 
 O projeto modela uma venda de ingressos como fluxo orientado a eventos:

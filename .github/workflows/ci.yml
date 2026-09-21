@@ -1,0 +1,39 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Test, lint and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Run unit tests
+        run: make test
+
+      - name: Run lint
+        run: make lint
+
+      - name: Run integration tests
+        run: make test-integration
+
+      - name: Build runtime images
+        run: make build
+
+      - name: Print service logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Stop local stack
+        if: always()
+        run: docker compose down --volumes
