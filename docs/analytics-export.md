@@ -55,7 +55,34 @@ O documento gerado usa `schemaVersion: sales-analytics-export.v1` e inclui:
 | `email.opened` | `email_notifications.opened_at` | Exportado apenas quando existe timestamp |
 | `email.clicked` | `email_notifications.clicked_at` | Exportado apenas quando existe timestamp |
 | `email.bounced` | `email_notifications.bounced_at` | Exportado apenas quando existe timestamp |
+| `ticket.issued` | `issued_tickets.created_at` | Conta tickets emitidos depois de pagamento aprovado |
 | `checkin.completed` | `ticket_check_ins.checked_in_at` | Conta demanda realizada no evento |
+
+## Funil com Incerteza
+
+O campo `funnels` resume conversoes condicionais por `salesEventId`,
+`ticketType`, `provider` e janela de coorte. A coorte e definida pelo horario de
+`sale.created`; eventos posteriores contam como sucesso dentro da mesma coorte.
+
+As etapas sao:
+
+```text
+accepted -> pending_payment -> paid -> ticket_issued -> check_in
+```
+
+Cada etapa informa:
+
+- `trials`: quantidade que chegou na etapa anterior;
+- `successes`: quantidade que chegou na etapa seguinte;
+- `conversionProbability`: `successes / trials`;
+- `confidenceInterval`: intervalo de Wilson para proporcao binomial;
+- `bayesian`: posterior Beta-Binomial com prior Beta(1,1).
+
+O intervalo de Wilson evita intervalos enganosos quando a amostra e pequena ou
+quando a conversao observada e zero ou um. A alternativa Bayesiana usa uma prior
+uniforme Beta(1,1): antes de observar dados, todas as probabilidades entre 0 e
+1 sao tratadas como igualmente plausiveis. Depois de observar `successes` e
+`failures`, a posterior fica `Beta(1 + successes, 1 + failures)`.
 
 ## Fixture
 
@@ -74,5 +101,8 @@ uma conclusao operacional real.
 - Eventos de email combinam o estado operacional atual com timestamps de eventos
   especificos quando eles existem. Analises de funil devem declarar essa regra
   antes de interpretar conversoes.
+- Segmentos por `provider` usam `unknown` quando a venda ainda nao tem provider
+  observado. Isso evita misturar vendas sem pagamento confirmado em providers
+  conhecidos.
 - Janelas sem eventos nao sao materializadas no JSON; consumidores devem criar
   janelas vazias quando precisarem de series temporais densas.

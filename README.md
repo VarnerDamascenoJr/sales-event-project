@@ -61,6 +61,8 @@ O export de dados para o OptiFlow esta em
 [`docs/optiflow-export.md`](docs/optiflow-export.md).
 O export analitico para estudos estatisticos esta em
 [`docs/analytics-export.md`](docs/analytics-export.md).
+A modelagem do funil de conversao com incerteza esta em
+[`docs/funnel-conversion.md`](docs/funnel-conversion.md).
 
 ## Criar venda
 
