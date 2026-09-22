@@ -230,6 +230,27 @@ WITH analytics_events AS (
 	FROM email_notifications en JOIN sales s ON s.id = en.sale_id WHERE en.bounced_at IS NOT NULL
 	UNION ALL
 	SELECT
+		it.id::text,
+		'ticket.issued'::text,
+		it.created_at,
+		COALESCE(s.sales_event_id::text, ''),
+		it.sale_id::text,
+		it.ticket_id::text,
+		t.name,
+		'ISSUED'::text,
+		''::text,
+		''::text,
+		0::int,
+		1::int,
+		0::int,
+		s.request_id,
+		s.correlation_id,
+		s.transaction_id
+	FROM issued_tickets it
+	JOIN tickets t ON t.id = it.ticket_id
+	JOIN sales s ON s.id = it.sale_id
+	UNION ALL
+	SELECT
 		tci.id::text,
 		'checkin.completed'::text,
 		tci.checked_in_at,
