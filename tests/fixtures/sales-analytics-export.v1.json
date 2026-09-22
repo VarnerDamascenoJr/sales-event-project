@@ -1,0 +1,140 @@
+{
+  "schemaVersion": "sales-analytics-export.v1",
+  "generatedAt": "2026-09-22T12:00:00Z",
+  "source": {
+    "service": "sales-event-project",
+    "salesEventId": "11111111-1111-1111-1111-111111111111",
+    "filter": "sales_event_id",
+    "windowSizes": [
+      "1m",
+      "5m"
+    ]
+  },
+  "summary": {
+    "eventCount": 4,
+    "windowCount": 5,
+    "eventTypeCounts": {
+      "checkin.completed": 1,
+      "email.sent": 1,
+      "payment.processed": 1,
+      "sale.created": 1
+    }
+  },
+  "events": [
+    {
+      "eventType": "sale.created",
+      "occurredAt": "2026-09-01T13:00:30Z",
+      "salesEventId": "11111111-1111-1111-1111-111111111111",
+      "saleId": "sale-001",
+      "status": "PENDING_PAYMENT",
+      "amountCents": 10000
+    },
+    {
+      "eventType": "payment.processed",
+      "occurredAt": "2026-09-01T13:01:15Z",
+      "salesEventId": "11111111-1111-1111-1111-111111111111",
+      "saleId": "sale-001",
+      "status": "APPROVED",
+      "provider": "credit_card",
+      "amountCents": 10000
+    },
+    {
+      "eventType": "email.sent",
+      "occurredAt": "2026-09-01T13:06:30Z",
+      "salesEventId": "11111111-1111-1111-1111-111111111111",
+      "saleId": "sale-001",
+      "status": "SENT",
+      "attempts": 1
+    },
+    {
+      "eventType": "checkin.completed",
+      "occurredAt": "2026-09-01T13:06:50Z",
+      "salesEventId": "11111111-1111-1111-1111-111111111111",
+      "saleId": "sale-001",
+      "status": "COMPLETED"
+    }
+  ],
+  "windows": [
+    {
+      "windowSize": "1m",
+      "windowStart": "2026-09-01T13:00:00Z",
+      "windowEnd": "2026-09-01T13:01:00Z",
+      "counts": {
+        "totalEvents": 1,
+        "eventTypeCounts": {
+          "sale.created": 1
+        },
+        "saleStatusCounts": {
+          "PENDING_PAYMENT": 1
+        },
+        "totalAmountCents": 10000
+      }
+    },
+    {
+      "windowSize": "5m",
+      "windowStart": "2026-09-01T13:00:00Z",
+      "windowEnd": "2026-09-01T13:05:00Z",
+      "counts": {
+        "totalEvents": 2,
+        "eventTypeCounts": {
+          "payment.processed": 1,
+          "sale.created": 1
+        },
+        "saleStatusCounts": {
+          "PENDING_PAYMENT": 1
+        },
+        "paymentStatusCounts": {
+          "APPROVED": 1
+        },
+        "totalAmountCents": 20000
+      }
+    },
+    {
+      "windowSize": "1m",
+      "windowStart": "2026-09-01T13:01:00Z",
+      "windowEnd": "2026-09-01T13:02:00Z",
+      "counts": {
+        "totalEvents": 1,
+        "eventTypeCounts": {
+          "payment.processed": 1
+        },
+        "paymentStatusCounts": {
+          "APPROVED": 1
+        },
+        "totalAmountCents": 10000
+      }
+    },
+    {
+      "windowSize": "1m",
+      "windowStart": "2026-09-01T13:06:00Z",
+      "windowEnd": "2026-09-01T13:07:00Z",
+      "counts": {
+        "totalEvents": 2,
+        "eventTypeCounts": {
+          "checkin.completed": 1,
+          "email.sent": 1
+        },
+        "emailStatusCounts": {
+          "SENT": 1
+        },
+        "checkInCount": 1
+      }
+    },
+    {
+      "windowSize": "5m",
+      "windowStart": "2026-09-01T13:05:00Z",
+      "windowEnd": "2026-09-01T13:10:00Z",
+      "counts": {
+        "totalEvents": 2,
+        "eventTypeCounts": {
+          "checkin.completed": 1,
+          "email.sent": 1
+        },
+        "emailStatusCounts": {
+          "SENT": 1
+        },
+        "checkInCount": 1
+      }
+    }
+  ]
+}
