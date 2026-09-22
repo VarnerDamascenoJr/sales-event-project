@@ -29,6 +29,7 @@ type Document struct {
 	Summary       Summary           `json:"summary"`
 	Events        []Event           `json:"events"`
 	Windows       []WindowAggregate `json:"windows"`
+	Funnels       []FunnelSegment   `json:"funnels,omitempty"`
 }
 
 type Source struct {
@@ -98,6 +99,7 @@ func BuildDocument(generatedAt time.Time, source Source, events []Event, specs [
 
 	windows := buildWindows(normalizedEvents, normalizedSpecs)
 	summary.WindowCount = len(windows)
+	funnels := BuildFunnelSegments(normalizedEvents, normalizedSpecs, DefaultFunnelOptions())
 
 	return Document{
 		SchemaVersion: SchemaVersion,
@@ -106,6 +108,7 @@ func BuildDocument(generatedAt time.Time, source Source, events []Event, specs [
 		Summary:       summary,
 		Events:        normalizedEvents,
 		Windows:       windows,
+		Funnels:       funnels,
 	}
 }
 
