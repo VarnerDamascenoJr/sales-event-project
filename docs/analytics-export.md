@@ -84,6 +84,31 @@ uniforme Beta(1,1): antes de observar dados, todas as probabilidades entre 0 e
 1 sao tratadas como igualmente plausiveis. Depois de observar `successes` e
 `failures`, a posterior fica `Beta(1 + successes, 1 + failures)`.
 
+## Analise de Sobrevivencia
+
+O campo `survivalAnalyses` mede tempo ate eventos operacionais e diferencia
+observacoes completas de censuradas. Uma observacao censurada e uma venda ou
+ticket que ainda nao chegou ao evento ate `generatedAt`, que funciona como
+tempo de corte do export.
+
+Analises geradas:
+
+| Analise | Unidade | Inicio | Evento observado |
+| --- | --- | --- | --- |
+| `time_to_payment` | `sale` | venda aceita | `payment.processed` aprovado |
+| `time_to_email_sent` | `sale` | venda aceita | `email.sent` |
+| `time_to_check_in` | `sale_ticket` | item de venda aceito | `checkin.completed` |
+
+Cada analise inclui:
+
+- `observationCount`, `eventCount` e `censoredCount`;
+- percentis `p50`, `p90` e `p95` em segundos, calculados apenas sobre eventos
+  observados;
+- `hazardTable`, com faixas de duracao, quantidade em risco, eventos, censura,
+  hazard simples e probabilidade de sobrevivencia acumulada.
+
+As faixas padrao sao `0-60s`, `60-300s`, `300-900s`, `900-3600s` e `3600s+`.
+
 ## Fixture
 
 Uma fixture pequena, com duas janelas de 5 minutos, esta em:
@@ -104,5 +129,8 @@ uma conclusao operacional real.
 - Segmentos por `provider` usam `unknown` quando a venda ainda nao tem provider
   observado. Isso evita misturar vendas sem pagamento confirmado em providers
   conhecidos.
+- Percentis de sobrevivencia ignoram observacoes censuradas. A tabela de hazard
+  preserva a contagem de censura para que a interpretacao nao confunda "ainda
+  nao aconteceu" com "nunca acontecera".
 - Janelas sem eventos nao sao materializadas no JSON; consumidores devem criar
   janelas vazias quando precisarem de series temporais densas.
