@@ -23,13 +23,14 @@ func DefaultWindowSpecs() []WindowSpec {
 }
 
 type Document struct {
-	SchemaVersion string            `json:"schemaVersion"`
-	GeneratedAt   time.Time         `json:"generatedAt"`
-	Source        Source            `json:"source"`
-	Summary       Summary           `json:"summary"`
-	Events        []Event           `json:"events"`
-	Windows       []WindowAggregate `json:"windows"`
-	Funnels       []FunnelSegment   `json:"funnels,omitempty"`
+	SchemaVersion    string             `json:"schemaVersion"`
+	GeneratedAt      time.Time          `json:"generatedAt"`
+	Source           Source             `json:"source"`
+	Summary          Summary            `json:"summary"`
+	Events           []Event            `json:"events"`
+	Windows          []WindowAggregate  `json:"windows"`
+	Funnels          []FunnelSegment    `json:"funnels,omitempty"`
+	SurvivalAnalyses []SurvivalAnalysis `json:"survivalAnalyses,omitempty"`
 }
 
 type Source struct {
@@ -100,15 +101,17 @@ func BuildDocument(generatedAt time.Time, source Source, events []Event, specs [
 	windows := buildWindows(normalizedEvents, normalizedSpecs)
 	summary.WindowCount = len(windows)
 	funnels := BuildFunnelSegments(normalizedEvents, normalizedSpecs, DefaultFunnelOptions())
+	survivalAnalyses := BuildSurvivalAnalyses(normalizedEvents, generatedAt.UTC(), DefaultSurvivalIntervals())
 
 	return Document{
-		SchemaVersion: SchemaVersion,
-		GeneratedAt:   generatedAt.UTC(),
-		Source:        source,
-		Summary:       summary,
-		Events:        normalizedEvents,
-		Windows:       windows,
-		Funnels:       funnels,
+		SchemaVersion:    SchemaVersion,
+		GeneratedAt:      generatedAt.UTC(),
+		Source:           source,
+		Summary:          summary,
+		Events:           normalizedEvents,
+		Windows:          windows,
+		Funnels:          funnels,
+		SurvivalAnalyses: survivalAnalyses,
 	}
 }
 
