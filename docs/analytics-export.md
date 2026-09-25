@@ -28,6 +28,43 @@ local dos demais entrypoints:
 postgres://sales:sales@localhost:5432/sales_event?sslmode=disable
 ```
 
+## API HTTP
+
+O mesmo contrato tambem esta disponivel para dashboards pelo endpoint protegido:
+
+```text
+GET /analytics/export?salesEventId=&start=&end=&limit=
+```
+
+Autenticacao:
+
+- Header `X-API-Key` obrigatorio;
+- roles permitidas: `SUPPORT` ou `ADMIN`.
+
+Exemplo local:
+
+```bash
+curl "http://localhost:8080/analytics/export?salesEventId=11111111-1111-1111-1111-111111111111&start=2026-09-01T10:00:00Z&end=2026-09-02T00:00:00Z&limit=2000" \
+  -H "X-API-Key: support-key"
+```
+
+Parametros:
+
+- `salesEventId`: filtro opcional por evento de vendas;
+- `start`: limite inferior inclusivo em RFC3339;
+- `end`: limite superior exclusivo em RFC3339;
+- `limit`: maximo de eventos individuais retornados. O padrao e `2000` e o
+  maximo aceito pela API HTTP e `10000`.
+
+Respostas esperadas:
+
+- `200`: documento `sales-analytics-export.v1`;
+- `400`: filtro invalido, como `limit` fora da faixa ou timestamp fora de
+  RFC3339;
+- `401`: `X-API-Key` ausente ou invalido;
+- `403`: chave valida sem role `SUPPORT` ou `ADMIN`;
+- `500`: falha interna ao exportar os dados.
+
 ## Contrato
 
 O documento gerado usa `schemaVersion: sales-analytics-export.v1` e inclui:
