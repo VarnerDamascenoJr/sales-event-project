@@ -14,6 +14,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/varner/sales-event-project/internal/analytics"
+	"github.com/varner/sales-event-project/internal/analyticsdb"
 	"github.com/varner/sales-event-project/internal/correlation"
 	"github.com/varner/sales-event-project/internal/events"
 	"github.com/varner/sales-event-project/internal/metrics"
@@ -27,6 +29,7 @@ type RouterDeps struct {
 	DB                   *pgxpool.Pool
 	Store                SalesStore
 	AuthStore            AuthStore
+	AnalyticsExporter    AnalyticsExporter
 	WebhookSecret        string
 	PaymentWebhookSecret string
 	MetricsProtected     bool
@@ -47,6 +50,10 @@ type SalesStore interface {
 	ProcessPaymentWebhook(ctx context.Context, req ProcessPaymentWebhookRequest) (ProcessPaymentResult, error)
 	CheckInTicket(ctx context.Context, req CheckInTicketRequest) (CheckInTicketResult, error)
 	RecordEmailEvent(ctx context.Context, req RecordEmailEventRequest) (RecordEmailEventResult, error)
+}
+
+type AnalyticsExporter interface {
+	ExportAnalytics(context.Context, analyticsdb.Filter) (analytics.Document, error)
 }
 
 type TicketReadModel struct {
@@ -240,6 +247,9 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 	if deps.AuthStore == nil && deps.DB != nil {
 		deps.AuthStore = NewPostgresAuthStore(deps.DB)
 	}
+	if deps.AnalyticsExporter == nil && deps.DB != nil {
+		deps.AnalyticsExporter = analyticsdb.NewExporter(deps.DB)
+	}
 
 	router := gin.New()
 	router.Use(gin.Recovery(), correlationMiddleware(), otelgin.Middleware("sales-event-api"), observability.GinCorrelationMiddleware(), metrics.GinMiddleware())
@@ -425,6 +435,26 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		}
 
 		c.JSON(http.StatusOK, sale)
+	})
+
+	router.GET("/analytics/export", requireRoles(deps.AuthStore, RoleSupport, RoleAdmin), func(c *gin.Context) {
+		filter, err := parseAnalyticsExportFilter(c)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if deps.AnalyticsExporter == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "analytics exporter is not configured"})
+			return
+		}
+
+		document, err := deps.AnalyticsExporter.ExportAnalytics(c.Request.Context(), filter)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "export analytics failed"})
+			return
+		}
+
+		c.JSON(http.StatusOK, document)
 	})
 
 	publicRateLimited := func(handler gin.HandlerFunc) gin.HandlerFunc {
@@ -727,6 +757,40 @@ func parsePagination(c *gin.Context) (int, int, error) {
 	}
 
 	return page, pageSize, nil
+}
+
+func parseAnalyticsExportFilter(c *gin.Context) (analyticsdb.Filter, error) {
+	limit := analyticsdb.DefaultLimit
+	if rawLimit := c.Query("limit"); rawLimit != "" {
+		parsedLimit, err := strconv.Atoi(rawLimit)
+		if err != nil {
+			return analyticsdb.Filter{}, errValidation("limit must be a valid integer")
+		}
+		limit = parsedLimit
+	}
+
+	if limit < 1 {
+		return analyticsdb.Filter{}, errValidation("limit must be greater than or equal to 1")
+	}
+	if limit > analyticsdb.MaxLimit {
+		return analyticsdb.Filter{}, errValidation(fmt.Sprintf("limit must be less than or equal to %d", analyticsdb.MaxLimit))
+	}
+
+	start := c.Query("start")
+	if err := analyticsdb.ValidateTimestampBound(start, "start"); err != nil {
+		return analyticsdb.Filter{}, errValidation(err.Error())
+	}
+	end := c.Query("end")
+	if err := analyticsdb.ValidateTimestampBound(end, "end"); err != nil {
+		return analyticsdb.Filter{}, errValidation(err.Error())
+	}
+
+	return analyticsdb.Filter{
+		SalesEventID: c.Query("salesEventId"),
+		Start:        start,
+		End:          end,
+		Limit:        limit,
+	}, nil
 }
 
 func listSales(ctx context.Context, store SalesStore, filter listSalesFilter) (ListSalesResponse, error) {
