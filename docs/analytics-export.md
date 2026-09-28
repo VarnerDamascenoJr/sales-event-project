@@ -75,6 +75,8 @@ O documento gerado usa `schemaVersion: sales-analytics-export.v1` e inclui:
 - contagens por status de venda, pagamento, outbox e email;
 - contagem de check-ins;
 - quantidade de tickets por tipo quando a dimensao existe;
+- previsao baseline de demanda por janela e tipo de ticket, quando existe serie
+  temporal suficiente;
 - campos de rastreabilidade: `requestId`, `correlationId` e `transactionId`.
 
 ## Eventos Exportados
@@ -146,6 +148,38 @@ Cada analise inclui:
 
 As faixas padrao sao `0-60s`, `60-300s`, `300-900s`, `900-3600s` e `3600s+`.
 
+## Previsao Baseline de Demanda
+
+O campo `demandForecasts` estima demanda futura por `salesEventId`, ticket,
+tipo de ticket e tamanho de janela. A demanda observada vem dos eventos
+`sale.item.created`, usando a quantidade comprada por item de venda.
+
+O baseline inicial usa media movel temporal:
+
+- a serie e ordenada por tempo e densificada com janelas vazias entre o primeiro
+  e o ultimo ponto observado;
+- series densificadas com mais de 500 janelas por ticket sao omitidas para
+  evitar payloads acidentalmente grandes;
+- as janelas finais sao separadas como teste temporal, sem embaralhar;
+- cada ponto de teste recebe uma previsao one-step-ahead usando apenas janelas
+  anteriores;
+- `mae` e `rmse` medem erro fora da amostra;
+- a proxima janela recebe `forecastQuantity`.
+
+Campos principais:
+
+| Campo | Interpretacao |
+| --- | --- |
+| `method` | Metodo usado; hoje `moving_average` |
+| `movingAverageWindow` | Quantidade maxima de janelas anteriores usadas na media |
+| `trainWindowCount` | Janelas usadas antes do periodo de teste |
+| `testWindowCount` | Janelas avaliadas fora da amostra |
+| `forecastWindowStart` / `forecastWindowEnd` | Horizonte da proxima previsao |
+| `forecastQuantity` | Quantidade esperada para a proxima janela |
+| `metrics.mae` | Erro absoluto medio no teste temporal |
+| `metrics.rmse` | Raiz do erro quadratico medio no teste temporal |
+| `series` | Pontos `train`, `test` e `forecast` com observado e previsao |
+
 ## Fixture
 
 Uma fixture pequena, com duas janelas de 5 minutos, esta em:
@@ -171,3 +205,6 @@ uma conclusao operacional real.
   nao aconteceu" com "nunca acontecera".
 - Janelas sem eventos nao sao materializadas no JSON; consumidores devem criar
   janelas vazias quando precisarem de series temporais densas.
+- A previsao de demanda densifica internamente janelas sem venda entre o
+  primeiro e o ultimo ponto observado. Ainda assim, ela e um baseline ingenuo:
+  serve como referencia inicial e nao como modelo sazonal calibrado.

@@ -31,6 +31,7 @@ type Document struct {
 	Windows          []WindowAggregate  `json:"windows"`
 	Funnels          []FunnelSegment    `json:"funnels,omitempty"`
 	SurvivalAnalyses []SurvivalAnalysis `json:"survivalAnalyses,omitempty"`
+	DemandForecasts  []DemandForecast   `json:"demandForecasts,omitempty"`
 }
 
 type Source struct {
@@ -102,6 +103,7 @@ func BuildDocument(generatedAt time.Time, source Source, events []Event, specs [
 	summary.WindowCount = len(windows)
 	funnels := BuildFunnelSegments(normalizedEvents, normalizedSpecs, DefaultFunnelOptions())
 	survivalAnalyses := BuildSurvivalAnalyses(normalizedEvents, generatedAt.UTC(), DefaultSurvivalIntervals())
+	demandForecasts := BuildDemandForecasts(normalizedEvents, normalizedSpecs, DefaultDemandForecastOptions())
 
 	return Document{
 		SchemaVersion:    SchemaVersion,
@@ -112,6 +114,7 @@ func BuildDocument(generatedAt time.Time, source Source, events []Event, specs [
 		Windows:          windows,
 		Funnels:          funnels,
 		SurvivalAnalyses: survivalAnalyses,
+		DemandForecasts:  demandForecasts,
 	}
 }
 
