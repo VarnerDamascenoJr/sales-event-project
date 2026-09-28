@@ -102,6 +102,12 @@ func TestAnalyticsFixtureMatchesSchema(t *testing.T) {
 	if len(document.Events) < 2 {
 		t.Fatalf("expected at least two fixture events, got %d", len(document.Events))
 	}
+	if document.SimulationPriors == nil {
+		t.Fatal("expected fixture simulation priors")
+	}
+	if document.SimulationPriors.SchemaVersion != SimulationPriorsSchemaVersion {
+		t.Fatalf("unexpected simulation priors schema: %s", document.SimulationPriors.SchemaVersion)
+	}
 
 	fiveMinuteWindows := 0
 	for _, window := range document.Windows {

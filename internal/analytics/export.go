@@ -33,6 +33,7 @@ type Document struct {
 	SurvivalAnalyses []SurvivalAnalysis `json:"survivalAnalyses,omitempty"`
 	DemandForecasts  []DemandForecast   `json:"demandForecasts,omitempty"`
 	StockoutRisks    []StockoutRisk     `json:"stockoutRisks,omitempty"`
+	SimulationPriors *SimulationPriors  `json:"simulationPriors,omitempty"`
 }
 
 type Source struct {
@@ -111,6 +112,7 @@ func BuildDocumentWithInventory(generatedAt time.Time, source Source, events []E
 	survivalAnalyses := BuildSurvivalAnalyses(normalizedEvents, normalizedGeneratedAt, DefaultSurvivalIntervals())
 	demandForecasts := BuildDemandForecasts(normalizedEvents, normalizedSpecs, DefaultDemandForecastOptions())
 	stockoutRisks := BuildStockoutRisks(normalizedEvents, normalizedSpecs, inventory, normalizedGeneratedAt, DefaultStockoutRiskOptions())
+	simulationPriors := BuildSimulationPriors(normalizedGeneratedAt, source, normalizedEvents, funnels, survivalAnalyses, demandForecasts, stockoutRisks)
 
 	return Document{
 		SchemaVersion:    SchemaVersion,
@@ -123,6 +125,7 @@ func BuildDocumentWithInventory(generatedAt time.Time, source Source, events []E
 		SurvivalAnalyses: survivalAnalyses,
 		DemandForecasts:  demandForecasts,
 		StockoutRisks:    stockoutRisks,
+		SimulationPriors: simulationPriors,
 	}
 }
 
