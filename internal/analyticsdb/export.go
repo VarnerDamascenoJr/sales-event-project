@@ -41,7 +41,12 @@ func (e Exporter) ExportAnalytics(ctx context.Context, filter Filter) (analytics
 		return analytics.Document{}, err
 	}
 
-	return analytics.BuildDocument(time.Now(), SourceForFilter(filter), events, analytics.DefaultWindowSpecs()), nil
+	inventory, err := ReadTicketInventory(ctx, e.DB, filter)
+	if err != nil {
+		return analytics.Document{}, err
+	}
+
+	return analytics.BuildDocumentWithInventory(time.Now(), SourceForFilter(filter), events, analytics.DefaultWindowSpecs(), inventory), nil
 }
 
 func ReadEvents(ctx context.Context, db Queryer, filter Filter) ([]analytics.Event, error) {
@@ -310,6 +315,42 @@ LIMIT $4
 	}
 
 	return events, nil
+}
+
+func ReadTicketInventory(ctx context.Context, db Queryer, filter Filter) ([]analytics.TicketInventory, error) {
+	rows, err := db.Query(ctx, `
+SELECT
+	COALESCE(t.sales_event_id::text, '') AS sales_event_id,
+	t.id::text AS ticket_id,
+	t.name AS ticket_type,
+	t.available_quantity::int AS available_quantity
+FROM tickets t
+WHERE ($1 = '' OR t.sales_event_id::text = $1)
+ORDER BY sales_event_id ASC, ticket_type ASC, ticket_id ASC
+`, filter.SalesEventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	inventory := make([]analytics.TicketInventory, 0)
+	for rows.Next() {
+		var item analytics.TicketInventory
+		if err := rows.Scan(
+			&item.SalesEventID,
+			&item.TicketID,
+			&item.TicketType,
+			&item.AvailableQuantity,
+		); err != nil {
+			return nil, err
+		}
+		inventory = append(inventory, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return inventory, nil
 }
 
 func ValidateTimestampBound(value string, name string) error {
