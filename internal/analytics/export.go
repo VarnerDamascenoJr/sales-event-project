@@ -32,6 +32,7 @@ type Document struct {
 	Funnels          []FunnelSegment    `json:"funnels,omitempty"`
 	SurvivalAnalyses []SurvivalAnalysis `json:"survivalAnalyses,omitempty"`
 	DemandForecasts  []DemandForecast   `json:"demandForecasts,omitempty"`
+	StockoutRisks    []StockoutRisk     `json:"stockoutRisks,omitempty"`
 }
 
 type Source struct {
@@ -86,8 +87,13 @@ type AggregateCounts struct {
 }
 
 func BuildDocument(generatedAt time.Time, source Source, events []Event, specs []WindowSpec) Document {
+	return BuildDocumentWithInventory(generatedAt, source, events, specs, nil)
+}
+
+func BuildDocumentWithInventory(generatedAt time.Time, source Source, events []Event, specs []WindowSpec, inventory []TicketInventory) Document {
 	normalizedEvents := normalizeEvents(events)
 	normalizedSpecs := normalizeWindowSpecs(specs)
+	normalizedGeneratedAt := generatedAt.UTC()
 	source.Service = "sales-event-project"
 	source.WindowSizes = windowSizeNames(normalizedSpecs)
 
@@ -102,12 +108,13 @@ func BuildDocument(generatedAt time.Time, source Source, events []Event, specs [
 	windows := buildWindows(normalizedEvents, normalizedSpecs)
 	summary.WindowCount = len(windows)
 	funnels := BuildFunnelSegments(normalizedEvents, normalizedSpecs, DefaultFunnelOptions())
-	survivalAnalyses := BuildSurvivalAnalyses(normalizedEvents, generatedAt.UTC(), DefaultSurvivalIntervals())
+	survivalAnalyses := BuildSurvivalAnalyses(normalizedEvents, normalizedGeneratedAt, DefaultSurvivalIntervals())
 	demandForecasts := BuildDemandForecasts(normalizedEvents, normalizedSpecs, DefaultDemandForecastOptions())
+	stockoutRisks := BuildStockoutRisks(normalizedEvents, normalizedSpecs, inventory, normalizedGeneratedAt, DefaultStockoutRiskOptions())
 
 	return Document{
 		SchemaVersion:    SchemaVersion,
-		GeneratedAt:      generatedAt.UTC(),
+		GeneratedAt:      normalizedGeneratedAt,
 		Source:           source,
 		Summary:          summary,
 		Events:           normalizedEvents,
@@ -115,6 +122,7 @@ func BuildDocument(generatedAt time.Time, source Source, events []Event, specs [
 		Funnels:          funnels,
 		SurvivalAnalyses: survivalAnalyses,
 		DemandForecasts:  demandForecasts,
+		StockoutRisks:    stockoutRisks,
 	}
 }
 

@@ -77,6 +77,8 @@ O documento gerado usa `schemaVersion: sales-analytics-export.v1` e inclui:
 - quantidade de tickets por tipo quando a dimensao existe;
 - previsao baseline de demanda por janela e tipo de ticket, quando existe serie
   temporal suficiente;
+- risco baseline de esgotamento de estoque por ticket, combinando estoque atual
+  com a taxa historica de demanda;
 - campos de rastreabilidade: `requestId`, `correlationId` e `transactionId`.
 
 ## Eventos Exportados
@@ -180,6 +182,42 @@ Campos principais:
 | `metrics.rmse` | Raiz do erro quadratico medio no teste temporal |
 | `series` | Pontos `train`, `test` e `forecast` com observado e previsao |
 
+## Risco de Esgotamento de Estoque
+
+O campo `stockoutRisks` estima, por ticket, a chance de o estoque atual acabar
+dentro de um horizonte operacional curto. O estoque vem de `tickets.available_quantity`
+no momento do export. A demanda historica vem dos eventos `sale.item.created`
+filtrados pelo mesmo `salesEventId` e intervalo temporal do export.
+
+O baseline inicial usa uma distribuicao de Poisson sobre a taxa media de demanda:
+
+- a serie de demanda e densificada em janelas de `5m`;
+- o horizonte padrao e de 12 janelas, ou seja, 1 hora;
+- a taxa media por janela e multiplicada pelo horizonte para obter a demanda
+  esperada;
+- a probabilidade de esgotamento e `P(demanda futura > availableQuantity)`;
+- `distribution` mostra a probabilidade acumulada de esgotamento a cada janela
+  futura;
+- tickets sem demanda observada recebem status `no_observed_demand`;
+- tickets com estoque atual menor ou igual a zero recebem status `stockout`.
+
+Campos principais:
+
+| Campo | Interpretacao |
+| --- | --- |
+| `availableQuantity` | Estoque atual do ticket no banco |
+| `windowSize` | Janela usada para estimar a taxa de demanda; hoje `5m` |
+| `horizonWindowCount` | Quantidade de janelas futuras consideradas |
+| `horizonStart` / `horizonEnd` | Intervalo temporal analisado a partir de `generatedAt` |
+| `meanDemandPerWindow` | Taxa media historica de vendas por janela |
+| `varianceDemandPerWindow` | Variancia amostral da demanda por janela |
+| `expectedDemand` | Demanda esperada acumulada no horizonte |
+| `stockoutProbability` | Probabilidade de esgotamento dentro do horizonte |
+| `expectedWindowsToStockout` | Tempo medio ate esgotar, em quantidade de janelas |
+| `expectedStockoutAt` | Timestamp derivado de `expectedWindowsToStockout` |
+| `riskBand` | Faixa `low`, `medium`, `high` ou `critical` |
+| `status` | `estimated`, `insufficient_history`, `no_observed_demand` ou `stockout` |
+
 ## Fixture
 
 Uma fixture pequena, com duas janelas de 5 minutos, esta em:
@@ -208,3 +246,6 @@ uma conclusao operacional real.
 - A previsao de demanda densifica internamente janelas sem venda entre o
   primeiro e o ultimo ponto observado. Ainda assim, ela e um baseline ingenuo:
   serve como referencia inicial e nao como modelo sazonal calibrado.
+- O risco de esgotamento usa estoque atual combinado com demanda historica do
+  filtro ativo. Quando filtros temporais estreitos sao usados, a taxa de demanda
+  pode ficar instavel ou insuficiente para estimar risco real.
