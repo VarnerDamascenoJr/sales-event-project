@@ -79,6 +79,7 @@ O documento gerado usa `schemaVersion: sales-analytics-export.v1` e inclui:
   temporal suficiente;
 - risco baseline de esgotamento de estoque por ticket, combinando estoque atual
   com a taxa historica de demanda;
+- priors de simulacao para o `OptiFlow`, derivados do mesmo dataset analitico;
 - campos de rastreabilidade: `requestId`, `correlationId` e `transactionId`.
 
 ## Eventos Exportados
@@ -217,6 +218,36 @@ Campos principais:
 | `expectedStockoutAt` | Timestamp derivado de `expectedWindowsToStockout` |
 | `riskBand` | Faixa `low`, `medium`, `high` ou `critical` |
 | `status` | `estimated`, `insufficient_history`, `no_observed_demand` ou `stockout` |
+
+## Priors para Simulacao no OptiFlow
+
+O campo `simulationPriors` resume parametros estimados para o `OptiFlow` em um
+subdocumento `optiflow-sales-priors.v1`. Ele permite que a simulacao use dados
+observados sem depender de constantes manuais.
+
+Fontes usadas:
+
+- `events`: amostra de vendas, periodo observado, demanda por venda e taxa de
+  cancelamento/nao conclusao;
+- `funnels`: probabilidades condicionais por etapa do funil, com Wilson e
+  Beta-Binomial;
+- `demandForecasts`: parametros de demanda por ticket e janela;
+- `survivalAnalyses`: incerteza de tempo operacional com censura preservada;
+- `stockoutRisks`: risco estimado de esgotamento por ticket.
+
+Campos principais:
+
+| Campo | Interpretacao |
+| --- | --- |
+| `sampleSize` | Tamanho da amostra usada para estimar conversao e demanda |
+| `estimates.conversionProbability` | Proporcao de vendas observadas que chegaram a pagamento aprovado |
+| `estimates.cancellationProbability` | Proporcao complementar usada como incerteza de cancelamento |
+| `estimates.demandMean` | Demanda media por venda concluida com itens observados |
+| `uncertainty` | Parametros diretamente aplicaveis pela simulacao Monte Carlo do `OptiFlow` |
+| `conversionStages` | Priors agregados por transicao do funil |
+| `demand` | Priors de demanda por ticket, janela e metodo de previsao |
+| `operationalTiming` | Priors de tempo operacional derivados da analise de sobrevivencia |
+| `stockoutRisks` | Priors de risco de estoque por ticket |
 
 ## Fixture
 
