@@ -80,11 +80,11 @@ func ConfigureTelemetry(ctx context.Context, service string, namespace string, e
 // GinCorrelationMiddleware binds a request ID and trace ID to request-scoped logs.
 func GinCorrelationMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		requestID := c.GetHeader("X-Request-ID")
+		requestID := c.GetHeader(correlation.RequestIDHeader)
 		if requestID == "" {
 			requestID = uuid.NewString()
 		}
-		c.Header("X-Request-ID", requestID)
+		c.Header(correlation.RequestIDHeader, requestID)
 
 		spanContext := oteltrace.SpanContextFromContext(c.Request.Context())
 		ctx := context.WithValue(c.Request.Context(), requestIDContextKey{}, requestID)
