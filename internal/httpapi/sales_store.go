@@ -506,21 +506,6 @@ func paymentOutboxPayload(eventID string, salesEventID string, req ProcessPaymen
 	})
 }
 
-type paymentSale struct {
-	ID             string
-	SalesEventID   string
-	SalesEventName string
-	StartsAt       time.Time
-	CustomerID     string
-	CustomerName   string
-	CustomerEmail  string
-	Status         string
-	TotalAmount    int
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	Metadata       correlation.Metadata
-}
-
 func (s *PostgresSalesStore) getSaleForPayment(ctx context.Context, tx pgx.Tx, saleID string) (paymentSale, error) {
 	var sale paymentSale
 	if err := tx.QueryRow(ctx, `
@@ -553,14 +538,6 @@ func (s *PostgresSalesStore) getSaleForPayment(ctx context.Context, tx pgx.Tx, s
 		return paymentSale{}, err
 	}
 	return sale, nil
-}
-
-type paymentIntentRecord struct {
-	ID       string
-	SaleID   string
-	Provider string
-	Amount   int
-	Status   string
 }
 
 func (s *PostgresSalesStore) getPaymentIntent(ctx context.Context, tx pgx.Tx, paymentIntentID string) (paymentIntentRecord, error) {
@@ -724,19 +701,6 @@ func (s *PostgresSalesStore) RecordEmailEvent(ctx context.Context, req RecordEma
 		RecordedAt:      req.OccurredAt.UTC(),
 		Metadata:        storedSaleMetadata(ctx, metadata, req.SaleID),
 	}, nil
-}
-
-type issuedTicketForCheckIn struct {
-	IssuedTicketID string
-	SalesEventID   string
-	SaleID         string
-	SaleStatus     string
-	PaymentStatus  string
-	TicketID       string
-	TicketName     string
-	CustomerID     string
-	CustomerName   string
-	Metadata       correlation.Metadata
 }
 
 func (s *PostgresSalesStore) getIssuedTicketForCheckIn(ctx context.Context, tx pgx.Tx, issuedTicketID string) (issuedTicketForCheckIn, error) {
