@@ -226,16 +226,6 @@ func (p *TicketDeliveryProcessor) ticketEmailAlreadySent(ctx context.Context, tx
 	return status == emailStatusSent, nil
 }
 
-type completedSale struct {
-	ID             string
-	SalesEventName string
-	StartsAt       time.Time
-	CustomerID     string
-	CustomerName   string
-	CustomerEmail  string
-	Status         string
-}
-
 func (p *TicketDeliveryProcessor) getCompletedSale(ctx context.Context, tx pgx.Tx, saleID string) (completedSale, error) {
 	var sale completedSale
 	if err := tx.QueryRow(ctx, `
@@ -324,12 +314,6 @@ func (p *TicketDeliveryProcessor) issueTickets(ctx context.Context, tx pgx.Tx, s
 
 	span.SetAttributes(attribute.Int("ticket.issued.count", len(issuedTickets)))
 	return issuedTickets, nil
-}
-
-type completedSaleItem struct {
-	TicketID   string
-	TicketName string
-	Quantity   int
 }
 
 func (p *TicketDeliveryProcessor) markTicketEmailSent(ctx context.Context, saleID string) error {
@@ -468,20 +452,6 @@ func (p *TicketDeliveryProcessor) RetryFailedEmails(ctx context.Context, batchSi
 	}
 
 	return tx.Commit(ctx)
-}
-
-type retryTicketEmail struct {
-	To             string
-	CustomerName   string
-	SalesEventName string
-	StartsAt       time.Time
-	Tickets        []notification.IssuedTicket
-}
-
-type pendingEmailRetry struct {
-	SaleID   string
-	Attempts int
-	Metadata correlation.Metadata
 }
 
 func (p *TicketDeliveryProcessor) loadRetryTicketEmail(ctx context.Context, tx pgx.Tx, saleID string) (*notification.TicketEmail, error) {
