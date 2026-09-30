@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/varner/sales-event-project/internal/correlation"
 )
 
 const (
@@ -50,8 +51,8 @@ func TestApprovedPaymentIssuesTicketsAndIsIdempotent(t *testing.T) {
 		CustomerEmail: fmt.Sprintf("buyer-%s@example.com", uuid.NewString()),
 		Quantity:      2,
 	}, map[string]string{
-		"X-Request-ID":     requestID,
-		"X-Correlation-ID": correlationID,
+		correlation.RequestIDHeader:     requestID,
+		correlation.CorrelationIDHeader: correlationID,
 	})
 	assertResponseCorrelation(t, createSaleHeaders, requestID, correlationID, saleID)
 
@@ -514,14 +515,14 @@ func assertStoredCorrelation(t *testing.T, record correlationRecord, requestID s
 
 func assertResponseCorrelation(t *testing.T, headers http.Header, requestID string, correlationID string, transactionID string) {
 	t.Helper()
-	if headers.Get("X-Request-ID") != requestID {
-		t.Fatalf("expected response request id %q, got %q", requestID, headers.Get("X-Request-ID"))
+	if headers.Get(correlation.RequestIDHeader) != requestID {
+		t.Fatalf("expected response request id %q, got %q", requestID, headers.Get(correlation.RequestIDHeader))
 	}
-	if headers.Get("X-Correlation-ID") != correlationID {
-		t.Fatalf("expected response correlation id %q, got %q", correlationID, headers.Get("X-Correlation-ID"))
+	if headers.Get(correlation.CorrelationIDHeader) != correlationID {
+		t.Fatalf("expected response correlation id %q, got %q", correlationID, headers.Get(correlation.CorrelationIDHeader))
 	}
-	if headers.Get("X-Transaction-ID") != transactionID {
-		t.Fatalf("expected response transaction id %q, got %q", transactionID, headers.Get("X-Transaction-ID"))
+	if headers.Get(correlation.TransactionIDHeader) != transactionID {
+		t.Fatalf("expected response transaction id %q, got %q", transactionID, headers.Get(correlation.TransactionIDHeader))
 	}
 }
 
