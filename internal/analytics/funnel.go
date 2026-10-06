@@ -176,16 +176,16 @@ func BuildFunnelSegments(events []Event, specs []WindowSpec, options FunnelOptio
 
 func normalizeFunnelOptions(options FunnelOptions) FunnelOptions {
 	defaults := DefaultFunnelOptions()
-	if options.ConfidenceLevel == 0 {
+	if !isFinite(options.ConfidenceLevel) || options.ConfidenceLevel == 0 {
 		options.ConfidenceLevel = defaults.ConfidenceLevel
 	}
-	if options.WilsonZ == 0 {
+	if !isFinite(options.WilsonZ) || options.WilsonZ == 0 {
 		options.WilsonZ = defaults.WilsonZ
 	}
-	if options.PriorAlpha <= 0 {
+	if !isFinite(options.PriorAlpha) || options.PriorAlpha <= 0 {
 		options.PriorAlpha = defaults.PriorAlpha
 	}
-	if options.PriorBeta <= 0 {
+	if !isFinite(options.PriorBeta) || options.PriorBeta <= 0 {
 		options.PriorBeta = defaults.PriorBeta
 	}
 	return options
@@ -367,7 +367,7 @@ func betaPosterior(successes int, trials int, options FunnelOptions) BetaBinomia
 		PriorBeta:      options.PriorBeta,
 		PosteriorAlpha: posteriorAlpha,
 		PosteriorBeta:  posteriorBeta,
-		PosteriorMean:  posteriorAlpha / (posteriorAlpha + posteriorBeta),
+		PosteriorMean:  clampProbability(posteriorAlpha / (posteriorAlpha + posteriorBeta)),
 	}
 }
 
@@ -375,15 +375,32 @@ func proportion(successes int, trials int) float64 {
 	if trials == 0 {
 		return 0
 	}
-	return float64(successes) / float64(trials)
+	return clampProbability(float64(successes) / float64(trials))
 }
 
 func clampProbability(value float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, -1) {
+		return 0
+	}
+	if math.IsInf(value, 1) {
+		return 1
+	}
 	if value < 0 {
 		return 0
 	}
 	if value > 1 {
 		return 1
+	}
+	return value
+}
+
+func isFinite(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func finiteOrZero(value float64) float64 {
+	if !isFinite(value) {
+		return 0
 	}
 	return value
 }

@@ -326,8 +326,11 @@ func demandPriors(forecasts []DemandForecast) []DemandPrior {
 			WindowSize:       forecast.WindowSize,
 			Method:           forecast.Method,
 			ObservedWindows:  observedWindows,
-			ForecastQuantity: forecast.ForecastQuantity,
-			Metrics:          forecast.Metrics,
+			ForecastQuantity: finiteOrZero(forecast.ForecastQuantity),
+			Metrics: DemandForecastMetrics{
+				MAE:  finiteOrZero(forecast.Metrics.MAE),
+				RMSE: finiteOrZero(forecast.Metrics.RMSE),
+			},
 		})
 	}
 	return priors
@@ -366,8 +369,8 @@ func stockoutRiskPriors(risks []StockoutRisk) []StockoutRiskPrior {
 			AvailableQuantity:   risk.AvailableQuantity,
 			WindowSize:          risk.WindowSize,
 			HorizonWindowCount:  risk.HorizonWindowCount,
-			ExpectedDemand:      risk.ExpectedDemand,
-			StockoutProbability: risk.StockoutProbability,
+			ExpectedDemand:      finiteOrZero(risk.ExpectedDemand),
+			StockoutProbability: clampProbability(risk.StockoutProbability),
 			RiskBand:            risk.RiskBand,
 			Status:              risk.Status,
 		})
@@ -435,11 +438,14 @@ func copyFloatMap(values map[string]float64) map[string]float64 {
 	}
 	copied := make(map[string]float64, len(values))
 	for key, value := range values {
-		copied[key] = value
+		copied[key] = finiteOrZero(value)
 	}
 	return copied
 }
 
 func round4(value float64) float64 {
+	if !isFinite(value) {
+		return 0
+	}
 	return math.Round(value*10000) / 10000
 }
