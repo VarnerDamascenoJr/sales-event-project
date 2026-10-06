@@ -1,6 +1,8 @@
 package analytics
 
 import (
+	"encoding/json"
+	"math"
 	"testing"
 	"time"
 )
@@ -80,5 +82,38 @@ func TestBuildSimulationPriorsUsesAnalyticsSections(t *testing.T) {
 	}
 	if len(priors.StockoutRisks) != 1 || priors.StockoutRisks[0].StockoutProbability != 0.25 {
 		t.Fatalf("unexpected stockout priors: %+v", priors.StockoutRisks)
+	}
+}
+
+func TestBuildSimulationPriorsSanitizesNonFiniteAnalyticsValues(t *testing.T) {
+	generatedAt := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	events := []Event{
+		{EventType: "sale.created", OccurredAt: generatedAt.Add(-time.Hour), SalesEventID: "event-1", SaleID: "sale-1", Status: "COMPLETED"},
+	}
+
+	priors := BuildSimulationPriors(
+		generatedAt,
+		Source{SalesEventID: "event-1"},
+		events,
+		nil,
+		[]SurvivalAnalysis{{EventName: "time_to_payment", Percentiles: map[string]float64{"p50": math.NaN()}}},
+		[]DemandForecast{{SalesEventID: "event-1", TicketID: "ticket-vip", WindowSize: "5m", ForecastQuantity: math.Inf(1), Metrics: DemandForecastMetrics{MAE: math.NaN(), RMSE: math.Inf(1)}}},
+		[]StockoutRisk{{SalesEventID: "event-1", TicketID: "ticket-vip", WindowSize: "5m", ExpectedDemand: math.Inf(1), StockoutProbability: math.NaN()}},
+	)
+
+	if priors == nil {
+		t.Fatal("expected simulation priors")
+	}
+	if _, err := json.Marshal(priors); err != nil {
+		t.Fatalf("marshal sanitized priors: %v", err)
+	}
+	if priors.Demand[0].ForecastQuantity != 0 || priors.Demand[0].Metrics.MAE != 0 || priors.Demand[0].Metrics.RMSE != 0 {
+		t.Fatalf("unexpected demand sanitization: %+v", priors.Demand[0])
+	}
+	if priors.OperationalTiming[0].Percentiles["p50"] != 0 {
+		t.Fatalf("unexpected percentile sanitization: %+v", priors.OperationalTiming[0].Percentiles)
+	}
+	if priors.StockoutRisks[0].ExpectedDemand != 0 || priors.StockoutRisks[0].StockoutProbability != 0 {
+		t.Fatalf("unexpected stockout sanitization: %+v", priors.StockoutRisks[0])
 	}
 }

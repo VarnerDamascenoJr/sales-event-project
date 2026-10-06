@@ -1,6 +1,7 @@
 package analytics
 
 import (
+	"math"
 	"testing"
 	"time"
 )
@@ -95,5 +96,51 @@ func TestBuildStockoutRisksMarksZeroInventoryAsStockout(t *testing.T) {
 	}
 	if risk.ExpectedWindowsToStockout == nil || *risk.ExpectedWindowsToStockout != 0 {
 		t.Fatalf("unexpected expected windows: %v", risk.ExpectedWindowsToStockout)
+	}
+}
+
+func TestPoissonStockoutProbabilityHandlesExtremeDemand(t *testing.T) {
+	tests := []struct {
+		name              string
+		expectedDemand    float64
+		availableQuantity int
+		want              float64
+	}{
+		{name: "invalid demand", expectedDemand: math.NaN(), availableQuantity: 1000, want: 0},
+		{name: "unobserved demand", expectedDemand: 0, availableQuantity: 1000, want: 0},
+		{name: "positive infinity demand", expectedDemand: math.Inf(1), availableQuantity: 1000, want: 1},
+		{name: "large demand", expectedDemand: 1_000_000, availableQuantity: 1000, want: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := poissonStockoutProbability(tt.expectedDemand, tt.availableQuantity)
+			if got != tt.want {
+				t.Fatalf("unexpected probability: got %f want %f", got, tt.want)
+			}
+			if math.IsNaN(got) || math.IsInf(got, 0) {
+				t.Fatalf("expected JSON-safe probability, got %f", got)
+			}
+		})
+	}
+}
+
+func TestClampProbabilityHandlesNonFiniteValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		value float64
+		want  float64
+	}{
+		{name: "nan", value: math.NaN(), want: 0},
+		{name: "positive infinity", value: math.Inf(1), want: 1},
+		{name: "negative infinity", value: math.Inf(-1), want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := clampProbability(tt.value); got != tt.want {
+				t.Fatalf("unexpected clamp: got %f want %f", got, tt.want)
+			}
+		})
 	}
 }

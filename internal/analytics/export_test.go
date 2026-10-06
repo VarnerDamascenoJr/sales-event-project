@@ -2,6 +2,7 @@ package analytics
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"testing"
 	"time"
@@ -117,6 +118,38 @@ func TestAnalyticsFixtureMatchesSchema(t *testing.T) {
 	}
 	if fiveMinuteWindows < 2 {
 		t.Fatalf("expected at least two 5m windows, got %d", fiveMinuteWindows)
+	}
+}
+
+func TestBuildDocumentWithInventoryMarshalsExtremeStockoutRisk(t *testing.T) {
+	base := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	generatedAt := time.Date(2026, 10, 6, 13, 0, 0, 0, time.UTC)
+
+	document := BuildDocumentWithInventory(
+		generatedAt,
+		Source{SalesEventID: "event-1", Filter: "sales_event_id"},
+		[]Event{
+			{EventType: "sale.created", OccurredAt: base, SalesEventID: "event-1", SaleID: "sale-1", Status: "COMPLETED"},
+			{EventType: "sale.item.created", OccurredAt: base, SalesEventID: "event-1", SaleID: "sale-1", TicketID: "ticket-vip", TicketType: "vip", Quantity: 1_000_000},
+			{EventType: "sale.created", OccurredAt: base.Add(5 * time.Minute), SalesEventID: "event-1", SaleID: "sale-2", Status: "COMPLETED"},
+			{EventType: "sale.item.created", OccurredAt: base.Add(5 * time.Minute), SalesEventID: "event-1", SaleID: "sale-2", TicketID: "ticket-vip", TicketType: "vip", Quantity: 1_000_000},
+		},
+		[]WindowSpec{{Name: "5m", Duration: 5 * time.Minute}},
+		[]TicketInventory{{SalesEventID: "event-1", TicketID: "ticket-vip", TicketType: "vip", AvailableQuantity: 1000}},
+	)
+
+	if len(document.StockoutRisks) != 1 {
+		t.Fatalf("expected one stockout risk, got %d", len(document.StockoutRisks))
+	}
+	risk := document.StockoutRisks[0]
+	if risk.StockoutProbability != 1 {
+		t.Fatalf("expected saturated stockout probability, got %f", risk.StockoutProbability)
+	}
+	if math.IsNaN(risk.StockoutProbability) || math.IsInf(risk.StockoutProbability, 0) {
+		t.Fatalf("expected JSON-safe stockout probability, got %f", risk.StockoutProbability)
+	}
+	if _, err := json.Marshal(document); err != nil {
+		t.Fatalf("marshal document with extreme stockout risk: %v", err)
 	}
 }
 
