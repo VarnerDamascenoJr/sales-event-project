@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"errors"
+	"math"
 	"net/http"
 	"testing"
 	"time"
@@ -39,6 +40,9 @@ func TestAnalyticsExportReturnsDocument(t *testing.T) {
 	decodeResponse(t, response, &body)
 	if body.SchemaVersion != analytics.SchemaVersion || body.Source.SalesEventID != testSalesEventID || body.Summary.EventCount != 1 {
 		t.Fatalf("unexpected analytics document: %+v", body)
+	}
+	if response.Body.Len() == 0 {
+		t.Fatal("expected non-empty analytics response body")
 	}
 }
 
@@ -79,4 +83,25 @@ func TestAnalyticsExportReturnsInternalError(t *testing.T) {
 
 	assertStatus(t, response, http.StatusInternalServerError)
 	assertJSONField(t, response, "error", "export analytics failed")
+}
+
+func TestAnalyticsExportReturnsInternalErrorWhenDocumentCannotMarshal(t *testing.T) {
+	document := analytics.Document{
+		SchemaVersion: analytics.SchemaVersion,
+		GeneratedAt:   time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC),
+		Source:        analytics.Source{SalesEventID: testSalesEventID},
+		Summary:       analytics.Summary{EventTypeCounts: map[string]int{}},
+		Events:        []analytics.Event{},
+		Windows:       []analytics.WindowAggregate{},
+		StockoutRisks: []analytics.StockoutRisk{{TicketID: testTicketID, StockoutProbability: math.NaN()}},
+	}
+	router, _, _ := newTestRouterWithAnalytics(fakeSalesStore{}, &fakeAnalyticsExporter{document: document})
+
+	response := performRequestWithAPIKey(t, router, http.MethodGet, "/analytics/export?salesEventId="+testSalesEventID+"&limit=10000", nil, "support-key")
+
+	assertStatus(t, response, http.StatusInternalServerError)
+	assertJSONField(t, response, "error", "serialize analytics export failed")
+	if response.Body.Len() == 0 {
+		t.Fatal("expected error response body")
+	}
 }
