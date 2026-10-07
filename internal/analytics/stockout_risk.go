@@ -198,8 +198,9 @@ func buildStockoutRisk(item TicketInventory, series demandSeries, generatedAt ti
 	risk.ObservedDemandQuantity = sumInts(quantities)
 	risk.MeanDemandPerWindow = meanInts(quantities)
 	risk.VarianceDemandPerWindow = sampleVarianceInts(quantities, risk.MeanDemandPerWindow)
-	risk.ExpectedDemand = risk.MeanDemandPerWindow * float64(options.HorizonWindows)
-	risk.StockoutProbability = poissonStockoutProbability(risk.ExpectedDemand, item.AvailableQuantity)
+	expectedDemand := risk.MeanDemandPerWindow * float64(options.HorizonWindows)
+	risk.ExpectedDemand = finiteOrZero(expectedDemand)
+	risk.StockoutProbability = poissonStockoutProbability(expectedDemand, item.AvailableQuantity)
 	risk.RiskBand = stockoutRiskBand(risk.StockoutProbability)
 	risk.Distribution = buildStockoutDistribution(horizonStart, spec.Duration, options.HorizonWindows, risk.MeanDemandPerWindow, item.AvailableQuantity)
 
@@ -226,7 +227,7 @@ func buildStockoutDistribution(start time.Time, duration time.Duration, horizonW
 			WindowOffset:             offset,
 			WindowStart:              windowStart,
 			WindowEnd:                windowStart.Add(duration),
-			CumulativeExpectedDemand: expectedDemand,
+			CumulativeExpectedDemand: finiteOrZero(expectedDemand),
 			StockoutProbability:      poissonStockoutProbability(expectedDemand, availableQuantity),
 		})
 	}
@@ -264,15 +265,30 @@ func poissonStockoutProbability(expectedDemand float64, availableQuantity int) f
 	if availableQuantity < 0 {
 		return 1
 	}
-	if expectedDemand <= 0 {
+	if math.IsNaN(expectedDemand) || expectedDemand <= 0 {
+		return 0
+	}
+	if math.IsInf(expectedDemand, 1) {
+		return 1
+	}
+	if math.IsInf(expectedDemand, -1) {
 		return 0
 	}
 
 	term := math.Exp(-expectedDemand)
+	if math.IsNaN(term) {
+		return 0
+	}
 	cdf := term
 	for k := 1; k <= availableQuantity; k++ {
 		term *= expectedDemand / float64(k)
+		if math.IsNaN(term) || math.IsInf(term, 0) {
+			return 1
+		}
 		cdf += term
+		if math.IsNaN(cdf) || math.IsInf(cdf, 0) {
+			return 1
+		}
 		if term == 0 {
 			break
 		}
