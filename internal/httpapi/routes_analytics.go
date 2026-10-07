@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -24,6 +26,18 @@ func registerAnalyticsRoutes(router *gin.Engine, deps RouterDeps) {
 			return
 		}
 
-		c.JSON(http.StatusOK, document)
+		payload, err := json.Marshal(document)
+		if err != nil {
+			slog.ErrorContext(c.Request.Context(), "marshal analytics export failed",
+				"route", "/analytics/export",
+				"sales_event_id", filter.SalesEventID,
+				"limit", filter.Limit,
+				"error", err,
+			)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "serialize analytics export failed"})
+			return
+		}
+
+		c.Data(http.StatusOK, "application/json", payload)
 	})
 }
