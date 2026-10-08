@@ -156,7 +156,7 @@ func TestCreateSaleRejectsNegativeQuantity(t *testing.T) {
 func TestListSalesRejectsInvalidStatusWithAvailableStatuses(t *testing.T) {
 	router, _, _ := newTestRouter(fakeSalesStore{salesEventExists: true})
 
-	response := performRequestWithAPIKey(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales?status=INVALID", nil, "support-key")
+	response := performRequestWithAPIKey(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales?status=INVALID", nil, "dev-support-key")
 
 	assertStatus(t, response, http.StatusBadRequest)
 	assertJSONField(t, response, "error", "status is invalid")
@@ -173,7 +173,7 @@ func TestListSalesRejectsInvalidStatusWithAvailableStatuses(t *testing.T) {
 func TestListSalesReturnsEmptyPageWhenSalesEventDoesNotExist(t *testing.T) {
 	router, _, _ := newTestRouter(fakeSalesStore{salesEventExists: false})
 
-	response := performRequestWithAPIKey(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales?page=2&pageSize=5", nil, "support-key")
+	response := performRequestWithAPIKey(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales?page=2&pageSize=5", nil, "dev-support-key")
 
 	assertStatus(t, response, http.StatusOK)
 
@@ -208,7 +208,7 @@ func TestListSalesReturnsPage(t *testing.T) {
 	}
 	router, _, _ := newTestRouter(store)
 
-	response := performRequestWithAPIKey(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales?page=1&pageSize=10&status=COMPLETED&eventName=Backend", nil, "support-key")
+	response := performRequestWithAPIKey(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales?page=1&pageSize=10&status=COMPLETED&eventName=Backend", nil, "dev-support-key")
 
 	assertStatus(t, response, http.StatusOK)
 
@@ -222,7 +222,7 @@ func TestListSalesReturnsPage(t *testing.T) {
 func TestGetSaleReturnsNotFoundWhenSalesEventDoesNotExist(t *testing.T) {
 	router, _, _ := newTestRouter(fakeSalesStore{salesEventExists: false})
 
-	response := performRequestWithAPIKey(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales/"+testSaleID, nil, "support-key")
+	response := performRequestWithAPIKey(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales/"+testSaleID, nil, "dev-support-key")
 
 	assertStatus(t, response, http.StatusNotFound)
 	assertJSONField(t, response, "error", "sales event does not exist")
@@ -234,7 +234,7 @@ func TestGetSaleReturnsNotFoundWhenSaleDoesNotExist(t *testing.T) {
 		getSaleErr:       errSaleNotFound,
 	})
 
-	response := performRequestWithAPIKey(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales/"+testSaleID, nil, "support-key")
+	response := performRequestWithAPIKey(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales/"+testSaleID, nil, "dev-support-key")
 
 	assertStatus(t, response, http.StatusNotFound)
 	assertJSONField(t, response, "error", "sale does not exist for this sales event")
@@ -271,7 +271,7 @@ func TestGetSaleReturnsDetail(t *testing.T) {
 		},
 	})
 
-	response := performRequestWithAPIKey(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales/"+testSaleID, nil, "support-key")
+	response := performRequestWithAPIKey(t, router, http.MethodGet, "/sales-events/"+testSalesEventID+"/sales/"+testSaleID, nil, "dev-support-key")
 
 	assertStatus(t, response, http.StatusOK)
 
