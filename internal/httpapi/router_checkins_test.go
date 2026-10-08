@@ -33,7 +33,7 @@ func TestCheckInTicketReturnsCreated(t *testing.T) {
 
 	response := performRequestWithAPIKey(t, router, http.MethodPost, "/sales-events/"+testSalesEventID+"/check-ins", map[string]any{
 		"ticketCode": "issued_ticket:" + issuedTicketID,
-	}, "check-in-key")
+	}, "dev-check-in-key")
 
 	assertStatus(t, response, http.StatusCreated)
 
@@ -53,7 +53,7 @@ func TestCheckInTicketRejectsInvalidTicketCode(t *testing.T) {
 
 	response := performRequestWithAPIKey(t, router, http.MethodPost, "/sales-events/"+testSalesEventID+"/check-ins", map[string]any{
 		"ticketCode": "issued_ticket:not-a-uuid",
-	}, "check-in-key")
+	}, "dev-check-in-key")
 
 	assertStatus(t, response, http.StatusBadRequest)
 	assertJSONField(t, response, "error", "ticketCode must contain a valid issued ticket id")
@@ -66,7 +66,7 @@ func TestCheckInTicketRejectsDuplicate(t *testing.T) {
 
 	response := performRequestWithAPIKey(t, router, http.MethodPost, "/sales-events/"+testSalesEventID+"/check-ins", map[string]any{
 		"ticketCode": "issued_ticket:bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-	}, "check-in-key")
+	}, "dev-check-in-key")
 
 	assertStatus(t, response, http.StatusConflict)
 	assertJSONField(t, response, "error", "ticket is already checked in")

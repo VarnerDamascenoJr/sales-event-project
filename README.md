@@ -349,6 +349,15 @@ curl 'http://localhost:8080/sales-events/11111111-1111-1111-1111-111111111111/sa
   -H 'X-API-Key: dev-support-key'
 ```
 
+Validar o export analitico com a chave local de suporte:
+
+```bash
+scripts/smoke-analytics-export-api-key.sh
+```
+
+O script usa `SALES_SUPPORT_API_KEY=dev-support-key` por padrao e tambem
+confirma que uma chave invalida retorna `401`.
+
 ## Observabilidade
 
 Endpoints:

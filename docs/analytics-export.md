@@ -40,12 +40,15 @@ Autenticacao:
 
 - Header `X-API-Key` obrigatorio;
 - roles permitidas: `SUPPORT` ou `ADMIN`.
+- chaves locais seedadas pelas migrations:
+  - `dev-support-key`: role `SUPPORT`;
+  - `dev-admin-key`: role `ADMIN`.
 
 Exemplo local:
 
 ```bash
 curl "http://localhost:8080/analytics/export?salesEventId=11111111-1111-1111-1111-111111111111&start=2026-09-01T10:00:00Z&end=2026-09-02T00:00:00Z&limit=2000" \
-  -H "X-API-Key: support-key"
+  -H "X-API-Key: dev-support-key"
 ```
 
 Parametros:

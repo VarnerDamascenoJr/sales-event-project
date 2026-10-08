@@ -23,10 +23,10 @@ func TestMetricsRouteRequiresAdminWhenProtected(t *testing.T) {
 	response := performRequest(t, router, http.MethodGet, "/metrics", nil)
 	assertStatus(t, response, http.StatusUnauthorized)
 
-	response = performRequestWithAPIKey(t, router, http.MethodGet, "/metrics", nil, "support-key")
+	response = performRequestWithAPIKey(t, router, http.MethodGet, "/metrics", nil, "dev-support-key")
 	assertStatus(t, response, http.StatusForbidden)
 
-	response = performRequestWithAPIKey(t, router, http.MethodGet, "/metrics", nil, "admin-key")
+	response = performRequestWithAPIKey(t, router, http.MethodGet, "/metrics", nil, "dev-admin-key")
 	assertStatus(t, response, http.StatusOK)
 }
 
@@ -82,7 +82,7 @@ func TestProtectedRoutesRejectWrongRole(t *testing.T) {
 
 	response := performRequestWithAPIKey(t, router, http.MethodPost, "/sales-events/"+testSalesEventID+"/check-ins", map[string]any{
 		"ticketCode": "issued_ticket:bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-	}, "support-key")
+	}, "dev-support-key")
 
 	assertStatus(t, response, http.StatusForbidden)
 	assertJSONField(t, response, "error", "api key role is not allowed")

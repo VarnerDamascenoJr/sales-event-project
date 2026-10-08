@@ -28,7 +28,7 @@ func TestCreatePaymentApprovesPendingSale(t *testing.T) {
 	response := performRequestWithAPIKey(t, router, http.MethodPost, "/sales/"+testSaleID+"/payments", map[string]any{
 		"amount":   10000,
 		"provider": "credit_card",
-	}, "payment-provider-key")
+	}, "dev-payment-provider-key")
 
 	assertStatus(t, response, http.StatusAccepted)
 
@@ -86,7 +86,7 @@ func TestCreatePaymentRejectsInvalidStatus(t *testing.T) {
 		"amount":   10000,
 		"provider": "credit_card",
 		"status":   "UNKNOWN",
-	}, "payment-provider-key")
+	}, "dev-payment-provider-key")
 
 	assertStatus(t, response, http.StatusBadRequest)
 	assertJSONField(t, response, "error", "status must be APPROVED or FAILED")

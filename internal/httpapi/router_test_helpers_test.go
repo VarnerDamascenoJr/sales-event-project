@@ -182,10 +182,10 @@ type fakeAuthStore struct {
 func newFakeAuthStore() *fakeAuthStore {
 	return &fakeAuthStore{
 		keys: map[string]APIKeyPrincipal{
-			"admin-key":            {ID: "auth-admin", Name: "Admin", Role: RoleAdmin},
-			"support-key":          {ID: "auth-support", Name: "Support", Role: RoleSupport},
-			"check-in-key":         {ID: "auth-check-in", Name: "Check-in", Role: RoleCheckIn},
-			"payment-provider-key": {ID: "auth-payment", Name: "Payment Provider", Role: RolePaymentProvider},
+			"dev-admin-key":            {ID: "auth-admin", Name: "Admin", Role: RoleAdmin},
+			"dev-support-key":          {ID: "auth-support", Name: "Support", Role: RoleSupport},
+			"dev-check-in-key":         {ID: "auth-check-in", Name: "Check-in", Role: RoleCheckIn},
+			"dev-payment-provider-key": {ID: "auth-payment", Name: "Payment Provider", Role: RolePaymentProvider},
 		},
 	}
 }
