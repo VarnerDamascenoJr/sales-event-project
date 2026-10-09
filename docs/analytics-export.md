@@ -1,11 +1,11 @@
-# Export Analitico de Eventos
+# Event Analytics Export
 
-O comando `analytics-export` transforma o historico operacional do PostgreSQL em
-um dataset estatistico versionado. Diferente do `optiflow-export`, que gera um
-cenario de planejamento para o `OptiFlow`, este export preserva eventos
-individuais e agregados por janela para analise estatistica.
+The `analytics-export` command turns the PostgreSQL operational history into a
+versioned statistical dataset. Unlike `optiflow-export`, which generates a
+planning scenario for `OptiFlow`, this export preserves individual events and
+windowed aggregates for statistical analysis.
 
-## Executar
+## Run
 
 ```bash
 go run ./cmd/analytics-export \
@@ -13,7 +13,7 @@ go run ./cmd/analytics-export \
   -output /tmp/sales-analytics-export.json
 ```
 
-Filtros temporais opcionais usam RFC3339:
+Optional time filters use RFC3339:
 
 ```bash
 go run ./cmd/analytics-export \
@@ -21,265 +21,280 @@ go run ./cmd/analytics-export \
   -end 2026-09-02T00:00:00Z
 ```
 
-O comando usa `DATABASE_URL`; quando a variavel nao existe, usa o mesmo padrao
-local dos demais entrypoints:
+The command uses `DATABASE_URL`; when the variable is not present, it uses the
+same local default as the other entrypoints:
 
 ```text
 postgres://sales:sales@localhost:5432/sales_event?sslmode=disable
 ```
 
-## API HTTP
+## HTTP API
 
-O mesmo contrato tambem esta disponivel para dashboards pelo endpoint protegido:
+The same contract is also available to dashboards through the protected
+endpoint:
 
 ```text
 GET /analytics/export?salesEventId=&start=&end=&limit=
 ```
 
-Autenticacao:
+Authentication:
 
-- Header `X-API-Key` obrigatorio;
-- roles permitidas: `SUPPORT` ou `ADMIN`.
-- chaves locais seedadas pelas migrations:
-  - `dev-support-key`: role `SUPPORT`;
-  - `dev-admin-key`: role `ADMIN`.
+- required `X-API-Key` header;
+- allowed roles: `SUPPORT` or `ADMIN`;
+- local keys seeded by the migrations:
+  - `dev-support-key`: `SUPPORT` role;
+  - `dev-admin-key`: `ADMIN` role.
 
-Exemplo local:
+Local example:
 
 ```bash
 curl "http://localhost:8080/analytics/export?salesEventId=11111111-1111-1111-1111-111111111111&start=2026-09-01T10:00:00Z&end=2026-09-02T00:00:00Z&limit=2000" \
   -H "X-API-Key: dev-support-key"
 ```
 
-Parametros:
+To generate a large dataset before exporting:
 
-- `salesEventId`: filtro opcional por evento de vendas;
-- `start`: limite inferior inclusivo em RFC3339;
-- `end`: limite superior exclusivo em RFC3339;
-- `limit`: maximo de eventos individuais retornados. O padrao e `2000` e o
-  maximo aceito pela API HTTP e `10000`.
+```bash
+scripts/generate-analytics-demo-data.sh --sales 50 --reset-demo-inventory
+```
 
-Respostas esperadas:
+The script uses HTTP endpoints and, locally, queries Postgres through
+`docker compose exec` only to select issued tickets that will be used for
+check-ins.
 
-- `200`: documento `sales-analytics-export.v1`;
-- `400`: filtro invalido, como `limit` fora da faixa ou timestamp fora de
+Parameters:
+
+- `salesEventId`: optional filter by sales event;
+- `start`: inclusive lower bound in RFC3339;
+- `end`: exclusive upper bound in RFC3339;
+- `limit`: maximum number of individual events returned. The default is `2000`,
+  and the maximum accepted by the HTTP API is `10000`.
+
+Expected responses:
+
+- `200`: `sales-analytics-export.v1` document;
+- `400`: invalid filter, such as `limit` out of range or a timestamp outside
   RFC3339;
-- `401`: `X-API-Key` ausente ou invalido;
-- `403`: chave valida sem role `SUPPORT` ou `ADMIN`;
-- `500`: falha interna ao exportar os dados.
+- `401`: missing or invalid `X-API-Key`;
+- `403`: valid key without the `SUPPORT` or `ADMIN` role;
+- `500`: internal failure while exporting data.
 
-## Contrato
+## Contract
 
-O documento gerado usa `schemaVersion: sales-analytics-export.v1` e inclui:
+The generated document uses `schemaVersion: sales-analytics-export.v1` and
+includes:
 
-- eventos individuais com timestamps normalizados em UTC;
-- agregados por janelas de `1m`, `5m`, `1h` e `1d`;
-- contagens por tipo de evento;
-- contagens por status de venda, pagamento, outbox e email;
-- contagem de check-ins;
-- quantidade de tickets por tipo quando a dimensao existe;
-- previsao baseline de demanda por janela e tipo de ticket, quando existe serie
-  temporal suficiente;
-- risco baseline de esgotamento de estoque por ticket, combinando estoque atual
-  com a taxa historica de demanda;
-- priors de simulacao para o `OptiFlow`, derivados do mesmo dataset analitico;
-- campos de rastreabilidade: `requestId`, `correlationId` e `transactionId`.
+- individual events with timestamps normalized to UTC;
+- aggregates over `1m`, `5m`, `1h`, and `1d` windows;
+- counts by event type;
+- counts by sale, payment, outbox, and email status;
+- check-in count;
+- ticket quantities by type when the dimension exists;
+- baseline demand forecast by window and ticket type when there is enough time
+  series data;
+- baseline stockout risk by ticket, combining current stock with the historical
+  demand rate;
+- simulation priors for `OptiFlow`, derived from the same analytics dataset;
+- traceability fields: `requestId`, `correlationId`, and `transactionId`.
 
-## Eventos Exportados
+## Exported Events
 
-| Evento | Origem | Observacao |
+| Event | Source | Note |
 | --- | --- | --- |
-| `sale.created` | `sales.created_at` | Representa venda persistida pelo worker |
-| `sale.item.created` | `sale_items.created_at` | Preserva demanda por tipo de ticket |
-| `payment.processed` | `payments.processed_at` | Inclui status, provider e valor |
-| `outbox.created` | `outbox_events.created_at` | Inclui tipo de evento, status e attempts |
-| `outbox.published` | `outbox_events.published_at` | Exportado apenas quando publicado |
-| `email.status` | `email_notifications.created_at` | Estado operacional atual do envio |
-| `email.sent` | `email_notifications.sent_at` | Exportado apenas quando existe timestamp |
-| `email.delivered` | `email_notifications.delivered_at` | Exportado apenas quando existe timestamp |
-| `email.opened` | `email_notifications.opened_at` | Exportado apenas quando existe timestamp |
-| `email.clicked` | `email_notifications.clicked_at` | Exportado apenas quando existe timestamp |
-| `email.bounced` | `email_notifications.bounced_at` | Exportado apenas quando existe timestamp |
-| `ticket.issued` | `issued_tickets.created_at` | Conta tickets emitidos depois de pagamento aprovado |
-| `checkin.completed` | `ticket_check_ins.checked_in_at` | Conta demanda realizada no evento |
+| `sale.created` | `sales.created_at` | Represents a sale persisted by the worker |
+| `sale.item.created` | `sale_items.created_at` | Preserves demand by ticket type |
+| `payment.processed` | `payments.processed_at` | Includes status, provider, and amount |
+| `outbox.created` | `outbox_events.created_at` | Includes event type, status, and attempts |
+| `outbox.published` | `outbox_events.published_at` | Exported only when published |
+| `email.status` | `email_notifications.created_at` | Current operational state of the send |
+| `email.sent` | `email_notifications.sent_at` | Exported only when a timestamp exists |
+| `email.delivered` | `email_notifications.delivered_at` | Exported only when a timestamp exists |
+| `email.opened` | `email_notifications.opened_at` | Exported only when a timestamp exists |
+| `email.clicked` | `email_notifications.clicked_at` | Exported only when a timestamp exists |
+| `email.bounced` | `email_notifications.bounced_at` | Exported only when a timestamp exists |
+| `ticket.issued` | `issued_tickets.created_at` | Counts tickets issued after approved payment |
+| `checkin.completed` | `ticket_check_ins.checked_in_at` | Counts demand realized at the event |
 
-## Funil com Incerteza
+## Funnel With Uncertainty
 
-O campo `funnels` resume conversoes condicionais por `salesEventId`,
-`ticketType`, `provider` e janela de coorte. A coorte e definida pelo horario de
-`sale.created`; eventos posteriores contam como sucesso dentro da mesma coorte.
+The `funnels` field summarizes conditional conversions by `salesEventId`,
+`ticketType`, `provider`, and cohort window. The cohort is defined by the
+`sale.created` timestamp; later events count as success within the same cohort.
 
-As etapas sao:
+The stages are:
 
 ```text
 accepted -> pending_payment -> paid -> ticket_issued -> check_in
 ```
 
-Cada etapa informa:
+Each stage reports:
 
-- `trials`: quantidade que chegou na etapa anterior;
-- `successes`: quantidade que chegou na etapa seguinte;
+- `trials`: number of items that reached the previous stage;
+- `successes`: number of items that reached the next stage;
 - `conversionProbability`: `successes / trials`;
-- `confidenceInterval`: intervalo de Wilson para proporcao binomial;
-- `bayesian`: posterior Beta-Binomial com prior Beta(1,1).
+- `confidenceInterval`: Wilson interval for a binomial proportion;
+- `bayesian`: Beta-Binomial posterior with a Beta(1,1) prior.
 
-O intervalo de Wilson evita intervalos enganosos quando a amostra e pequena ou
-quando a conversao observada e zero ou um. A alternativa Bayesiana usa uma prior
-uniforme Beta(1,1): antes de observar dados, todas as probabilidades entre 0 e
-1 sao tratadas como igualmente plausiveis. Depois de observar `successes` e
-`failures`, a posterior fica `Beta(1 + successes, 1 + failures)`.
+The Wilson interval avoids misleading intervals when the sample is small or when
+the observed conversion is zero or one. The Bayesian alternative uses a uniform
+Beta(1,1) prior: before observing data, all probabilities between 0 and 1 are
+treated as equally plausible. After observing `successes` and `failures`, the
+posterior becomes `Beta(1 + successes, 1 + failures)`.
 
-## Analise de Sobrevivencia
+## Survival Analysis
 
-O campo `survivalAnalyses` mede tempo ate eventos operacionais e diferencia
-observacoes completas de censuradas. Uma observacao censurada e uma venda ou
-ticket que ainda nao chegou ao evento ate `generatedAt`, que funciona como
-tempo de corte do export.
+The `survivalAnalyses` field measures time to operational events and separates
+complete observations from censored ones. A censored observation is a sale or
+ticket that has not reached the event by `generatedAt`, which acts as the export
+cutoff time.
 
-Analises geradas:
+Generated analyses:
 
-| Analise | Unidade | Inicio | Evento observado |
+| Analysis | Unit | Start | Observed event |
 | --- | --- | --- | --- |
-| `time_to_payment` | `sale` | venda aceita | `payment.processed` aprovado |
-| `time_to_email_sent` | `sale` | venda aceita | `email.sent` |
-| `time_to_check_in` | `sale_ticket` | item de venda aceito | `checkin.completed` |
+| `time_to_payment` | `sale` | accepted sale | approved `payment.processed` |
+| `time_to_email_sent` | `sale` | accepted sale | `email.sent` |
+| `time_to_check_in` | `sale_ticket` | accepted sale item | `checkin.completed` |
 
-Cada analise inclui:
+Each analysis includes:
 
-- `observationCount`, `eventCount` e `censoredCount`;
-- percentis `p50`, `p90` e `p95` em segundos, calculados apenas sobre eventos
-  observados;
-- `hazardTable`, com faixas de duracao, quantidade em risco, eventos, censura,
-  hazard simples e probabilidade de sobrevivencia acumulada.
+- `observationCount`, `eventCount`, and `censoredCount`;
+- `p50`, `p90`, and `p95` percentiles in seconds, calculated only from observed
+  events;
+- `hazardTable`, with duration buckets, number at risk, events, censored
+  observations, simple hazard, and cumulative survival probability.
 
-As faixas padrao sao `0-60s`, `60-300s`, `300-900s`, `900-3600s` e `3600s+`.
+The default buckets are `0-60s`, `60-300s`, `300-900s`, `900-3600s`, and
+`3600s+`.
 
-## Previsao Baseline de Demanda
+## Baseline Demand Forecast
 
-O campo `demandForecasts` estima demanda futura por `salesEventId`, ticket,
-tipo de ticket e tamanho de janela. A demanda observada vem dos eventos
-`sale.item.created`, usando a quantidade comprada por item de venda.
+The `demandForecasts` field estimates future demand by `salesEventId`, ticket,
+ticket type, and window size. Observed demand comes from `sale.item.created`
+events, using the purchased quantity per sale item.
 
-O baseline inicial usa media movel temporal:
+The initial baseline uses a temporal moving average:
 
-- a serie e ordenada por tempo e densificada com janelas vazias entre o primeiro
-  e o ultimo ponto observado;
-- series densificadas com mais de 500 janelas por ticket sao omitidas para
-  evitar payloads acidentalmente grandes;
-- as janelas finais sao separadas como teste temporal, sem embaralhar;
-- cada ponto de teste recebe uma previsao one-step-ahead usando apenas janelas
-  anteriores;
-- `mae` e `rmse` medem erro fora da amostra;
-- a proxima janela recebe `forecastQuantity`.
+- the series is sorted by time and densified with empty windows between the
+  first and last observed points;
+- densified series with more than 500 windows per ticket are omitted to avoid
+  accidentally large payloads;
+- the final windows are split out as a temporal test set, without shuffling;
+- each test point receives a one-step-ahead forecast using only previous
+  windows;
+- `mae` and `rmse` measure out-of-sample error;
+- the next window receives `forecastQuantity`.
 
-Campos principais:
+Main fields:
 
-| Campo | Interpretacao |
+| Field | Interpretation |
 | --- | --- |
-| `method` | Metodo usado; hoje `moving_average` |
-| `movingAverageWindow` | Quantidade maxima de janelas anteriores usadas na media |
-| `trainWindowCount` | Janelas usadas antes do periodo de teste |
-| `testWindowCount` | Janelas avaliadas fora da amostra |
-| `forecastWindowStart` / `forecastWindowEnd` | Horizonte da proxima previsao |
-| `forecastQuantity` | Quantidade esperada para a proxima janela |
-| `metrics.mae` | Erro absoluto medio no teste temporal |
-| `metrics.rmse` | Raiz do erro quadratico medio no teste temporal |
-| `series` | Pontos `train`, `test` e `forecast` com observado e previsao |
+| `method` | Method used; currently `moving_average` |
+| `movingAverageWindow` | Maximum number of previous windows used in the average |
+| `trainWindowCount` | Windows used before the test period |
+| `testWindowCount` | Windows evaluated out of sample |
+| `forecastWindowStart` / `forecastWindowEnd` | Next forecast horizon |
+| `forecastQuantity` | Expected quantity for the next window |
+| `metrics.mae` | Mean absolute error on the temporal test |
+| `metrics.rmse` | Root mean squared error on the temporal test |
+| `series` | `train`, `test`, and `forecast` points with observed and forecast values |
 
-## Risco de Esgotamento de Estoque
+## Stockout Risk
 
-O campo `stockoutRisks` estima, por ticket, a chance de o estoque atual acabar
-dentro de um horizonte operacional curto. O estoque vem de `tickets.available_quantity`
-no momento do export. A demanda historica vem dos eventos `sale.item.created`
-filtrados pelo mesmo `salesEventId` e intervalo temporal do export.
+The `stockoutRisks` field estimates, by ticket, the chance that current stock
+will run out within a short operational horizon. Stock comes from
+`tickets.available_quantity` at export time. Historical demand comes from
+`sale.item.created` events filtered by the same `salesEventId` and time range as
+the export.
 
-O baseline inicial usa uma distribuicao de Poisson sobre a taxa media de demanda:
+The initial baseline uses a Poisson distribution over the average demand rate:
 
-- a serie de demanda e densificada em janelas de `5m`;
-- o horizonte padrao e de 12 janelas, ou seja, 1 hora;
-- a taxa media por janela e multiplicada pelo horizonte para obter a demanda
-  esperada;
-- a probabilidade de esgotamento e `P(demanda futura > availableQuantity)`;
-- `distribution` mostra a probabilidade acumulada de esgotamento a cada janela
-  futura;
-- tickets sem demanda observada recebem status `no_observed_demand`;
-- tickets com estoque atual menor ou igual a zero recebem status `stockout`.
+- the demand series is densified into `5m` windows;
+- the default horizon is 12 windows, or 1 hour;
+- the average rate per window is multiplied by the horizon to obtain expected
+  demand;
+- stockout probability is `P(future demand > availableQuantity)`;
+- `distribution` shows the cumulative stockout probability at each future
+  window;
+- tickets without observed demand receive the `no_observed_demand` status;
+- tickets with current stock less than or equal to zero receive the `stockout`
+  status.
 
-Campos principais:
+Main fields:
 
-| Campo | Interpretacao |
+| Field | Interpretation |
 | --- | --- |
-| `availableQuantity` | Estoque atual do ticket no banco |
-| `windowSize` | Janela usada para estimar a taxa de demanda; hoje `5m` |
-| `horizonWindowCount` | Quantidade de janelas futuras consideradas |
-| `horizonStart` / `horizonEnd` | Intervalo temporal analisado a partir de `generatedAt` |
-| `meanDemandPerWindow` | Taxa media historica de vendas por janela |
-| `varianceDemandPerWindow` | Variancia amostral da demanda por janela |
-| `expectedDemand` | Demanda esperada acumulada no horizonte |
-| `stockoutProbability` | Probabilidade de esgotamento dentro do horizonte |
-| `expectedWindowsToStockout` | Tempo medio ate esgotar, em quantidade de janelas |
-| `expectedStockoutAt` | Timestamp derivado de `expectedWindowsToStockout` |
-| `riskBand` | Faixa `low`, `medium`, `high` ou `critical` |
-| `status` | `estimated`, `insufficient_history`, `no_observed_demand` ou `stockout` |
+| `availableQuantity` | Current ticket stock in the database |
+| `windowSize` | Window used to estimate demand rate; currently `5m` |
+| `horizonWindowCount` | Number of future windows considered |
+| `horizonStart` / `horizonEnd` | Time range analyzed from `generatedAt` |
+| `meanDemandPerWindow` | Historical average sales rate per window |
+| `varianceDemandPerWindow` | Sample variance of demand by window |
+| `expectedDemand` | Expected cumulative demand over the horizon |
+| `stockoutProbability` | Probability of stockout within the horizon |
+| `expectedWindowsToStockout` | Average time to stockout, in number of windows |
+| `expectedStockoutAt` | Timestamp derived from `expectedWindowsToStockout` |
+| `riskBand` | `low`, `medium`, `high`, or `critical` band |
+| `status` | `estimated`, `insufficient_history`, `no_observed_demand`, or `stockout` |
 
-## Priors para Simulacao no OptiFlow
+## Priors For OptiFlow Simulation
 
-O campo `simulationPriors` resume parametros estimados para o `OptiFlow` em um
-subdocumento `optiflow-sales-priors.v1`. Ele permite que a simulacao use dados
-observados sem depender de constantes manuais.
+The `simulationPriors` field summarizes estimated parameters for `OptiFlow` in
+an `optiflow-sales-priors.v1` subdocument. It lets the simulation use observed
+data without relying on manual constants.
 
-Fontes usadas:
+Sources used:
 
-- `events`: amostra de vendas, periodo observado, demanda por venda e taxa de
-  cancelamento/nao conclusao;
-- `funnels`: probabilidades condicionais por etapa do funil, com Wilson e
+- `events`: sales sample, observed period, demand per sale, and
+  cancellation/non-completion rate;
+- `funnels`: conditional probabilities by funnel stage, with Wilson and
   Beta-Binomial;
-- `demandForecasts`: parametros de demanda por ticket e janela;
-- `survivalAnalyses`: incerteza de tempo operacional com censura preservada;
-- `stockoutRisks`: risco estimado de esgotamento por ticket.
+- `demandForecasts`: demand parameters by ticket and window;
+- `survivalAnalyses`: operational timing uncertainty with preserved censoring;
+- `stockoutRisks`: estimated stockout risk by ticket.
 
-Campos principais:
+Main fields:
 
-| Campo | Interpretacao |
+| Field | Interpretation |
 | --- | --- |
-| `sampleSize` | Tamanho da amostra usada para estimar conversao e demanda |
-| `estimates.conversionProbability` | Proporcao de vendas observadas que chegaram a pagamento aprovado |
-| `estimates.cancellationProbability` | Proporcao complementar usada como incerteza de cancelamento |
-| `estimates.demandMean` | Demanda media por venda concluida com itens observados |
-| `uncertainty` | Parametros diretamente aplicaveis pela simulacao Monte Carlo do `OptiFlow` |
-| `conversionStages` | Priors agregados por transicao do funil |
-| `demand` | Priors de demanda por ticket, janela e metodo de previsao |
-| `operationalTiming` | Priors de tempo operacional derivados da analise de sobrevivencia |
-| `stockoutRisks` | Priors de risco de estoque por ticket |
+| `sampleSize` | Sample size used to estimate conversion and demand |
+| `estimates.conversionProbability` | Share of observed sales that reached approved payment |
+| `estimates.cancellationProbability` | Complementary share used as cancellation uncertainty |
+| `estimates.demandMean` | Average demand per completed sale with observed items |
+| `uncertainty` | Parameters directly applicable by the `OptiFlow` Monte Carlo simulation |
+| `conversionStages` | Priors aggregated by funnel transition |
+| `demand` | Demand priors by ticket, window, and forecast method |
+| `operationalTiming` | Operational timing priors derived from survival analysis |
+| `stockoutRisks` | Stock risk priors by ticket |
 
 ## Fixture
 
-Uma fixture pequena, com duas janelas de 5 minutos, esta em:
+A small fixture with two 5-minute windows is available at:
 
 - `tests/fixtures/sales-analytics-export.v1.json`
 
-Ela e sintetica e serve para validar o contrato do export, nao para representar
-uma conclusao operacional real.
+It is synthetic and exists to validate the export contract, not to represent a
+real operational conclusion.
 
-## Limitacoes
+## Limitations
 
-- Alguns eventos sao derivados de tabelas que guardam o estado atual da entidade.
-  Por exemplo, `sale.created` usa `sales.created_at`, mas o status da venda e o
-  status observado no momento do export.
-- Eventos de email combinam o estado operacional atual com timestamps de eventos
-  especificos quando eles existem. Analises de funil devem declarar essa regra
-  antes de interpretar conversoes.
-- Segmentos por `provider` usam `unknown` quando a venda ainda nao tem provider
-  observado. Isso evita misturar vendas sem pagamento confirmado em providers
-  conhecidos.
-- Percentis de sobrevivencia ignoram observacoes censuradas. A tabela de hazard
-  preserva a contagem de censura para que a interpretacao nao confunda "ainda
-  nao aconteceu" com "nunca acontecera".
-- Janelas sem eventos nao sao materializadas no JSON; consumidores devem criar
-  janelas vazias quando precisarem de series temporais densas.
-- A previsao de demanda densifica internamente janelas sem venda entre o
-  primeiro e o ultimo ponto observado. Ainda assim, ela e um baseline ingenuo:
-  serve como referencia inicial e nao como modelo sazonal calibrado.
-- O risco de esgotamento usa estoque atual combinado com demanda historica do
-  filtro ativo. Quando filtros temporais estreitos sao usados, a taxa de demanda
-  pode ficar instavel ou insuficiente para estimar risco real.
+- Some events are derived from tables that store the entity's current state. For
+  example, `sale.created` uses `sales.created_at`, but the sale status is the
+  status observed at export time.
+- Email events combine the current operational state with specific event
+  timestamps when they exist. Funnel analyses should state this rule before
+  interpreting conversions.
+- Segments by `provider` use `unknown` when the sale does not have an observed
+  provider yet. This avoids mixing sales without confirmed payment into known
+  providers.
+- Survival percentiles ignore censored observations. The hazard table preserves
+  the censoring count so the interpretation does not confuse "has not happened
+  yet" with "will never happen."
+- Windows without events are not materialized in JSON; consumers should create
+  empty windows when they need dense time series.
+- The demand forecast internally densifies windows without sales between the
+  first and last observed points. Even so, it is a naive baseline: it serves as
+  an initial reference, not as a calibrated seasonal model.
+- Stockout risk uses current stock combined with historical demand from the
+  active filter. When narrow time filters are used, the demand rate can become
+  unstable or insufficient to estimate real risk.
