@@ -66,6 +66,35 @@ A modelagem do funil de conversao com incerteza esta em
 A analise de tempo ate eventos com censura esta em
 [`docs/survival-analysis.md`](docs/survival-analysis.md).
 
+## Gerar massa analitica de demo
+
+Para recriar uma massa rica para o `react-dash`, suba a stack local e rode:
+
+```bash
+scripts/generate-analytics-demo-data.sh --sales 50 --reset-demo-inventory
+```
+
+O script gera vendas General/VIP, pagamentos aprovados e falhos, eventos de
+email e check-ins. Ele imprime um resumo JSON final com as contagens geradas.
+Por padrao, usa as chaves locais seedadas `dev-payment-provider-key` e
+`dev-check-in-key`; valores sensiveis sao redigidos no resumo.
+
+Controles uteis:
+
+- `--sales`: quantidade de vendas a criar;
+- `--failed-payment-rate`: fracao de pagamentos falhos, entre `0` e `1`;
+- `--check-ins`: quantidade maxima de tickets emitidos a validar no evento;
+- `--no-email-events`: desativa webhooks de email;
+- `--reset-demo-inventory`: restaura estoque demo sem apagar vendas antigas;
+- `--api-base-url`: base da API local, por padrao `http://localhost:8080`.
+
+Depois de gerar dados, valide o export:
+
+```bash
+curl -sS -H 'X-API-Key: dev-support-key' \
+  'http://localhost:8080/analytics/export?salesEventId=11111111-1111-1111-1111-111111111111&limit=10000'
+```
+
 ## Criar venda
 
 As migrations já criam um evento publicado e dois tickets para teste local.
