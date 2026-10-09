@@ -15,8 +15,8 @@ const (
 	defaultSalesEventID       = "11111111-1111-1111-1111-111111111111"
 	defaultGeneralTicketID    = "22222222-2222-2222-2222-222222222222"
 	defaultVIPTicketID        = "33333333-3333-3333-3333-333333333333"
-	defaultPaymentAPIKey      = "dev-payment-provider-key"
-	defaultCheckInAPIKey      = "dev-check-in-key"
+	defaultPaymentAPIKey      = "dev-payment-provider-key" // #nosec G101 -- local seeded demo key, redacted in output.
+	defaultCheckInAPIKey      = "dev-check-in-key"         // #nosec G101 -- local seeded demo key, redacted in output.
 	defaultEmailWebhookSecret = "change-me-email-webhook-secret"
 )
 

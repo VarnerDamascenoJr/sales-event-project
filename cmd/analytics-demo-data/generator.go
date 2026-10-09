@@ -23,7 +23,7 @@ func newGenerator(cfg config, stderr io.Writer) *generator {
 			httpClient:     &http.Client{Timeout: cfg.RequestTimeout},
 			rateLimitSleep: cfg.RateLimitSleep,
 		},
-		rng:    rand.New(rand.NewSource(cfg.Seed)),
+		rng:    rand.New(rand.NewSource(cfg.Seed)), // #nosec G404 -- deterministic demo data, not cryptographic randomness.
 		stderr: stderr,
 	}
 }
