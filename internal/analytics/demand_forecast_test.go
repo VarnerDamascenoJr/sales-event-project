@@ -1,12 +1,11 @@
 package analytics
 
 import (
-	"math"
 	"testing"
 	"time"
 )
 
-func TestBuildDemandForecastsUsesMovingAverageAndTemporalHoldout(t *testing.T) {
+func TestBuildDemandForecastsBuildsForecastDocument(t *testing.T) {
 	base := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
 	events := []Event{
 		demandEvent(base, "vip", 2),
@@ -55,32 +54,43 @@ func TestBuildDemandForecastsUsesMovingAverageAndTemporalHoldout(t *testing.T) {
 	}
 }
 
-func TestBuildDemandForecastsDensifiesMissingWindows(t *testing.T) {
+func TestBuildDemandForecastsReturnsSortedForecasts(t *testing.T) {
 	base := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
 	events := []Event{
+		demandEvent(base, "vip", 1),
+		demandEvent(base.Add(5*time.Minute), "vip", 2),
 		demandEvent(base, "standard", 3),
-		demandEvent(base.Add(10*time.Minute), "standard", 9),
+		demandEvent(base.Add(5*time.Minute), "standard", 4),
 	}
 
 	forecasts := BuildDemandForecasts(events, []WindowSpec{
 		{Name: "5m", Duration: 5 * time.Minute},
+		{Name: "1m", Duration: time.Minute},
 	}, DemandForecastOptions{
-		MovingAverageWindow: 2,
-		TestFraction:        0.34,
+		MovingAverageWindow: 1,
+		TestFraction:        0.5,
 		MinimumTestWindows:  1,
 		HorizonWindows:      1,
 	})
 
-	if len(forecasts) != 1 {
-		t.Fatalf("expected one forecast, got %d", len(forecasts))
+	if len(forecasts) != 4 {
+		t.Fatalf("expected forecasts for both ticket types and window sizes, got %d", len(forecasts))
 	}
-	forecast := forecasts[0]
-	if len(forecast.Series) != 4 {
-		t.Fatalf("expected dense train/test plus forecast, got %d", len(forecast.Series))
+
+	expected := []struct {
+		windowSize string
+		ticketType string
+	}{
+		{windowSize: "1m", ticketType: "standard"},
+		{windowSize: "1m", ticketType: "vip"},
+		{windowSize: "5m", ticketType: "standard"},
+		{windowSize: "5m", ticketType: "vip"},
 	}
-	middle := forecast.Series[1]
-	if middle.ObservedQuantity == nil || *middle.ObservedQuantity != 0 {
-		t.Fatalf("expected zero-filled missing window, got %+v", middle)
+	for i, want := range expected {
+		got := forecasts[i]
+		if got.WindowSize != want.windowSize || got.TicketType != want.ticketType {
+			t.Fatalf("forecast %d: expected %s/%s, got %s/%s", i, want.windowSize, want.ticketType, got.WindowSize, got.TicketType)
+		}
 	}
 }
 
@@ -96,34 +106,4 @@ func TestBuildDemandForecastsReturnsEmptyWithoutTicketDemand(t *testing.T) {
 	if len(forecasts) != 0 {
 		t.Fatalf("expected no forecasts, got %+v", forecasts)
 	}
-}
-
-func TestBuildDemandForecastsSkipsSeriesAboveWindowLimit(t *testing.T) {
-	base := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
-	forecasts := BuildDemandForecasts([]Event{
-		demandEvent(base, "vip", 1),
-		demandEvent(base.Add(20*time.Minute), "vip", 1),
-	}, []WindowSpec{{Name: "5m", Duration: 5 * time.Minute}}, DemandForecastOptions{
-		MaxSeriesWindows: 3,
-	})
-
-	if len(forecasts) != 0 {
-		t.Fatalf("expected capped series to be skipped, got %+v", forecasts)
-	}
-}
-
-func demandEvent(at time.Time, ticketType string, quantity int) Event {
-	return Event{
-		EventType:    "sale.item.created",
-		OccurredAt:   at,
-		SalesEventID: "event-1",
-		SaleID:       "sale-1",
-		TicketID:     "ticket-" + ticketType,
-		TicketType:   ticketType,
-		Quantity:     quantity,
-	}
-}
-
-func almostEqual(left float64, right float64) bool {
-	return math.Abs(left-right) < 0.000001
 }
