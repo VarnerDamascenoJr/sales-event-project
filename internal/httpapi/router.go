@@ -3,7 +3,6 @@ package httpapi
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/varner/sales-event-project/internal/analyticsdb"
-	"github.com/varner/sales-event-project/internal/metrics"
 	"github.com/varner/sales-event-project/internal/observability"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
@@ -20,7 +19,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 	}
 
 	router := gin.New()
-	router.Use(gin.Recovery(), correlationMiddleware(), otelgin.Middleware("sales-event-api"), observability.GinCorrelationMiddleware(), metrics.GinMiddleware())
+	router.Use(gin.Recovery(), correlationMiddleware(), otelgin.Middleware("sales-event-api"), observability.GinCorrelationMiddleware(), observability.GinMetricsMiddleware())
 
 	registerSystemRoutes(router, deps)
 	registerWebhookRoutes(router, deps)
