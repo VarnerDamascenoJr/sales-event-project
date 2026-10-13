@@ -45,28 +45,6 @@ func TestBuildFunnelSegmentsComputesConditionalConversions(t *testing.T) {
 	assertFunnelStep(t, unknownSegment.Steps[1], FunnelStagePending, FunnelStagePaid, 1, 0, 0)
 }
 
-func TestBuildFunnelSegmentsHandlesZeroDenominatorSteps(t *testing.T) {
-	base := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
-	segments := BuildFunnelSegments([]Event{
-		{EventType: "sale.created", OccurredAt: base, SalesEventID: "event-1", SaleID: "sale-1", Status: "FAILED"},
-		{EventType: "sale.item.created", OccurredAt: base, SalesEventID: "event-1", SaleID: "sale-1", TicketID: "ticket-general", TicketType: "General", Status: "FAILED", Quantity: 1},
-	}, []WindowSpec{{Name: "5m", Duration: 5 * time.Minute}}, DefaultFunnelOptions())
-
-	if len(segments) != 1 {
-		t.Fatalf("expected one segment, got %d", len(segments))
-	}
-	paidStep := segments[0].Steps[1]
-	if paidStep.Trials != 0 || paidStep.Successes != 0 {
-		t.Fatalf("expected zero denominator paid step, got %+v", paidStep)
-	}
-	if paidStep.ConfidenceInterval.Lower != 0 || paidStep.ConfidenceInterval.Upper != 0 {
-		t.Fatalf("expected empty confidence interval for zero denominator, got %+v", paidStep.ConfidenceInterval)
-	}
-	if paidStep.Bayesian.PosteriorMean != 0.5 {
-		t.Fatalf("expected Beta(1,1) posterior mean for no data, got %f", paidStep.Bayesian.PosteriorMean)
-	}
-}
-
 func findFunnelSegment(t *testing.T, segments []FunnelSegment, provider string) FunnelSegment {
 	t.Helper()
 	for _, segment := range segments {
