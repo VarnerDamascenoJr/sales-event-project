@@ -1,10 +1,6 @@
 package metrics
 
 import (
-	"strconv"
-	"time"
-
-	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -88,19 +84,3 @@ var (
 		Help: "Total number of rows deleted by retention cleanup.",
 	}, []string{"table"})
 )
-
-func GinMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		start := time.Now()
-		c.Next()
-
-		route := c.FullPath()
-		if route == "" {
-			route = c.Request.URL.Path
-		}
-
-		status := strconv.Itoa(c.Writer.Status())
-		HTTPRequestTotal.WithLabelValues(c.Request.Method, route, status).Inc()
-		HTTPRequestDuration.WithLabelValues(c.Request.Method, route, status).Observe(time.Since(start).Seconds())
-	}
-}
