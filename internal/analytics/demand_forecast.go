@@ -2,18 +2,7 @@ package analytics
 
 import (
 	"sort"
-	"time"
 )
-
-const DemandForecastMethodMovingAverage = "moving_average"
-
-type DemandForecastOptions struct {
-	MovingAverageWindow int
-	TestFraction        float64
-	MinimumTestWindows  int
-	HorizonWindows      int
-	MaxSeriesWindows    int
-}
 
 func DefaultDemandForecastOptions() DemandForecastOptions {
 	return DemandForecastOptions{
@@ -23,37 +12,6 @@ func DefaultDemandForecastOptions() DemandForecastOptions {
 		HorizonWindows:      1,
 		MaxSeriesWindows:    500,
 	}
-}
-
-type DemandForecast struct {
-	SalesEventID        string                `json:"salesEventId,omitempty"`
-	TicketID            string                `json:"ticketId,omitempty"`
-	TicketType          string                `json:"ticketType,omitempty"`
-	WindowSize          string                `json:"windowSize"`
-	Method              string                `json:"method"`
-	MovingAverageWindow int                   `json:"movingAverageWindow"`
-	TrainWindowCount    int                   `json:"trainWindowCount"`
-	TestWindowCount     int                   `json:"testWindowCount"`
-	ForecastWindowStart time.Time             `json:"forecastWindowStart"`
-	ForecastWindowEnd   time.Time             `json:"forecastWindowEnd"`
-	ForecastQuantity    float64               `json:"forecastQuantity"`
-	Metrics             DemandForecastMetrics `json:"metrics"`
-	Series              []DemandSeriesPoint   `json:"series"`
-}
-
-type DemandForecastMetrics struct {
-	MAE  float64 `json:"mae"`
-	RMSE float64 `json:"rmse"`
-}
-
-type DemandSeriesPoint struct {
-	WindowStart       time.Time `json:"windowStart"`
-	WindowEnd         time.Time `json:"windowEnd"`
-	Split             string    `json:"split"`
-	ObservedQuantity  *int      `json:"observedQuantity,omitempty"`
-	PredictedQuantity *float64  `json:"predictedQuantity,omitempty"`
-	AbsoluteError     *float64  `json:"absoluteError,omitempty"`
-	SquaredError      *float64  `json:"squaredError,omitempty"`
 }
 
 func BuildDemandForecasts(events []Event, specs []WindowSpec, options DemandForecastOptions) []DemandForecast {
