@@ -1,9 +1,25 @@
 package observability
 
 import (
+	"bytes"
 	"log/slog"
 	"testing"
 )
+
+func TestRedactingHandlerWithGroup(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(redactingHandler{handler: slog.NewJSONHandler(&output, nil)}).
+		WithGroup("payload").With("email", "buyer@example.com")
+	logger.Info("sale accepted", "smtp_password", "secret", "sale_id", "sale-123")
+	records := readConfiguredLogRecords(t, &output)
+	if len(records) != 1 {
+		t.Fatalf("expected one grouped log record, got %d", len(records))
+	}
+	assertConfiguredLogRecord(t, records[0], map[string]any{
+		"level": "INFO", "msg": "sale accepted",
+		"payload": map[string]any{"email": "[redacted]", "smtp_password": "[redacted]", "sale_id": "sale-123"},
+	})
+}
 
 func TestRedactAttrRedactsSensitiveValue(t *testing.T) {
 	attr := redactAttr(slog.String("email", "customer@example.com"))

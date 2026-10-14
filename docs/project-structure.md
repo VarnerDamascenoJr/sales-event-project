@@ -26,11 +26,11 @@
 - `internal/messaging`
   - cliente RabbitMQ, declaração de exchange/queues e publish/consume.
 - `internal/metrics`
-  - métricas Prometheus e middleware Gin.
+  - definições das métricas Prometheus.
 - `internal/notification`
   - envio de email por SMTP ou logger fallback.
 - `internal/observability`
-  - configuração do logger estruturado.
+  - configuração do logger estruturado, telemetria e middleware de métricas HTTP.
 - `internal/outbox`
   - publicador de eventos pendentes da tabela outbox.
 - `internal/retention`
@@ -95,7 +95,7 @@
   - webhook secret em `webhook_auth.go`;
   - assinatura HMAC do corpo em `signature_auth.go`;
   - rate limit em `rate_limit.go`;
-  - métricas em `internal/metrics`.
+  - métricas em `internal/observability/metrics_http_middleware.go`.
 - Store:
   - `PostgresSalesStore` e `PostgresAuthStore`.
 - Segurança e validação:
@@ -128,6 +128,15 @@
   - envio real.
 - `LogSender`
   - fallback quando SMTP não está configurado.
+
+## Convenções de arquivos Go
+
+- Use nomes em minúsculas, com palavras separadas por `_` quando necessário, indicando a responsabilidade do arquivo.
+- Arquivos dedicados a middlewares devem incluir `_middleware.go` no nome, como `metrics_http_middleware.go`.
+- Os testes ficam no mesmo diretório, com o nome correspondente terminado em `_test.go`, como `metrics_http_middleware_test.go`.
+- Funções exportadas devem ter um comentário de documentação iniciado pelo nome da função, descrevendo seu comportamento.
+
+A identificação de middleware no nome é uma convenção deste projeto, não uma exigência da linguagem. As referências oficiais são [How to Write Go Code: Testing](https://go.dev/doc/code#Testing) e [Go Doc Comments](https://go.dev/doc/comment).
 
 ## Organização dos testes
 

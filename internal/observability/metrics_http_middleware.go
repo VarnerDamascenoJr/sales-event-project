@@ -8,6 +8,8 @@ import (
 	"github.com/varner/sales-event-project/internal/metrics"
 )
 
+// GinMetricsMiddleware records Prometheus request counts and durations.
+// It labels requests by method, matched route (or URL path), and final status.
 func GinMetricsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()

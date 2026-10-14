@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"testing"
@@ -8,6 +9,21 @@ import (
 
 	"github.com/varner/sales-event-project/internal/correlation"
 )
+
+func TestCorrelationHandlerWithGroup(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(correlationHandler{handler: slog.NewJSONHandler(&output, nil)}).WithGroup("sale")
+	ctx := correlation.ContextWithMetadata(context.Background(), correlation.Metadata{RequestID: "req-123"})
+	logger.InfoContext(ctx, "sale accepted", "sale_id", "sale-123")
+	records := readConfiguredLogRecords(t, &output)
+	if len(records) != 1 {
+		t.Fatalf("expected one grouped log record, got %d", len(records))
+	}
+	assertConfiguredLogRecord(t, records[0], map[string]any{
+		"level": "INFO", "msg": "sale accepted",
+		"sale": map[string]any{"request_id": "req-123", "sale_id": "sale-123"},
+	})
+}
 
 func TestCorrelationHandlerAddsLogAttrsFromContext(t *testing.T) {
 	capture := &captureHandler{}

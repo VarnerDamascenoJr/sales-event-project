@@ -38,6 +38,9 @@ func (h multiHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 }
 
 func (h multiHandler) WithGroup(name string) slog.Handler {
+	if name == "" {
+		return h
+	}
 	handlers := make([]slog.Handler, 0, len(h.handlers))
 	for _, handler := range h.handlers {
 		handlers = append(handlers, handler.WithGroup(name))
