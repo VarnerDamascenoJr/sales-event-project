@@ -18,6 +18,10 @@
   - cobre backoff/regras de retry de email.
 - `cmd/migrate/main_test.go`
   - cobre parsing básico do runner de migrations.
+- `internal/observability/*_test.go`
+  - cobre logging, redação, correlação HTTP/AMQP, métricas e configuração de telemetria;
+  - usa `httptest` como coletor OTLP local para validar exportação de traces, métricas e logs;
+  - restaura os globals do logger e do OpenTelemetry ao terminar cada teste.
 - `tests/integration/sales_flow_test.go`
   - cobre fluxo ponta a ponta com serviços reais.
 
@@ -40,8 +44,7 @@
 - `Fato confirmado`: não há testes unitários dedicados para:
   - `internal/worker/sales_processor.go`;
   - `internal/httpapi/sales_store.go` em nível de store/SQL;
-  - `internal/notification/mailer.go`;
-  - `internal/observability/logging.go`.
+  - `internal/notification/mailer.go`.
 - `Inferência`: boa parte das regras transacionais está concentrada no store PostgreSQL e depende principalmente do teste de integração para cobertura real.
 
 ## Mocks e doubles
