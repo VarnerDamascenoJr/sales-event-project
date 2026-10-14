@@ -10,6 +10,20 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
+func TestContextWithTraceContextWithoutHeader(t *testing.T) {
+	ctx := context.WithValue(context.Background(), requestIDContextKey{}, "req-123")
+	if got := ContextWithTraceContext(ctx, ""); got != ctx {
+		t.Fatal("expected the original context when the trace header is empty")
+	}
+}
+
+func TestTraceContextWithoutSpan(t *testing.T) {
+	useAMQPTestPropagator(t)
+	if got := TraceContext(context.Background()); got != "" {
+		t.Fatalf("expected no trace header without a span, got %q", got)
+	}
+}
+
 func TestTraceContextRoundTrip(t *testing.T) {
 	previousPropagator := otel.GetTextMapPropagator()
 	otel.SetTextMapPropagator(propagation.TraceContext{})
