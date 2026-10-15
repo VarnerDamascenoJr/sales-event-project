@@ -8,6 +8,9 @@
 
 ## Organização
 
+- `internal/analyticsdb/*_test.go`
+  - cobre filtros, limites, mapeamento de valores nulos, UTC e composição do documento;
+  - valida propagação de erros e fechamento das linhas usando doubles de `Queryer` e `pgx.Rows`, sem PostgreSQL externo.
 - `internal/httpapi/router_test.go`
   - valida handlers, autenticação, rate limit, webhooks e payloads.
 - `internal/outbox/publisher_test.go`
