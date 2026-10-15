@@ -15,6 +15,8 @@
 
 ### `internal/`
 
+- `internal/analyticsdb`
+  - leitura do histórico e inventário PostgreSQL para exportação analítica.
 - `internal/config`
   - leitura e parsing de variáveis de ambiente.
 - `internal/database`
@@ -128,6 +130,15 @@
   - envio real.
 - `LogSender`
   - fallback quando SMTP não está configurado.
+
+## `internal/analyticsdb`
+
+- `export.go`: contrato de consulta e coordenação da montagem do documento analítico.
+- `filter.go`: filtros, limites, validação de datas e descrição da origem.
+- `events.go`: leitura de eventos, mapeamento de colunas e normalização para UTC.
+- `inventory.go`: leitura da disponibilidade de tickets.
+- `queries.go`: consultas SQL de eventos e inventário.
+- Os testes ficam no mesmo pacote e usam doubles de `Queryer` e `pgx.Rows`.
 
 ## Convenções de arquivos Go
 
