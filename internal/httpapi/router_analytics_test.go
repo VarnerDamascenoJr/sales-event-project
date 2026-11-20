@@ -1,9 +1,13 @@
 package httpapi
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"math"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,6 +90,11 @@ func TestAnalyticsExportReturnsInternalError(t *testing.T) {
 }
 
 func TestAnalyticsExportReturnsInternalErrorWhenDocumentCannotMarshal(t *testing.T) {
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
 	document := analytics.Document{
 		SchemaVersion: analytics.SchemaVersion,
 		GeneratedAt:   time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC),
@@ -103,5 +112,26 @@ func TestAnalyticsExportReturnsInternalErrorWhenDocumentCannotMarshal(t *testing
 	assertJSONField(t, response, "error", "serialize analytics export failed")
 	if response.Body.Len() == 0 {
 		t.Fatal("expected error response body")
+	}
+	if contentType := response.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "application/json") {
+		t.Fatalf("expected JSON error response, got content type %q", contentType)
+	}
+	if strings.Contains(response.Body.String(), "NaN") || strings.Contains(response.Body.String(), "dev-support-key") {
+		t.Fatalf("error response exposed internal details: %s", response.Body.String())
+	}
+
+	if strings.Contains(logs.String(), "dev-support-key") {
+		t.Fatal("serialization log exposed the API key")
+	}
+	decoder := json.NewDecoder(&logs)
+	var entry map[string]any
+	if err := decoder.Decode(&entry); err != nil {
+		t.Fatalf("decode serialization log: %v", err)
+	}
+	cause, _ := entry["error"].(string)
+	if entry["msg"] != "marshal analytics export failed" || entry["route"] != "/analytics/export" ||
+		entry["sales_event_id"] != testSalesEventID || entry["limit"] != float64(10000) ||
+		!strings.Contains(cause, "NaN") {
+		t.Fatalf("unexpected serialization log: %+v", entry)
 	}
 }
