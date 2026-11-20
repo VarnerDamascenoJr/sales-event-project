@@ -2,6 +2,7 @@ package analytics
 
 import (
 	"math"
+	"strconv"
 	"testing"
 )
 
@@ -46,6 +47,36 @@ func TestPoissonStockoutProbabilityStaysJSONSafe(t *testing.T) {
 			}
 			if got < 0 || got > 1 {
 				t.Fatalf("expected probability in range [0,1], got %f", got)
+			}
+		})
+	}
+}
+
+func TestPoissonStockoutProbabilityLargeDemand(t *testing.T) {
+	tests := []struct {
+		name      string
+		demand    float64
+		stock     int64
+		want      float64
+		tolerance float64
+	}{
+		{name: "below underflow threshold", demand: 700, stock: 700, want: 0.48994943414294543, tolerance: 1e-10},
+		{name: "above underflow threshold", demand: 701, stock: 701, want: 0.4899566028208438, tolerance: 1e-10},
+		{name: "stock well above demand", demand: 1000, stock: 2000, want: 0, tolerance: 1e-100},
+		{name: "stock below demand", demand: 1000, stock: 950, want: 0.9421637070446768, tolerance: 1e-10},
+		{name: "stock at demand", demand: 1000, stock: 1000, want: 0.491590632831494, tolerance: 1e-10},
+		{name: "stock above demand", demand: 1000, stock: 1050, want: 0.05602883836367338, tolerance: 1e-10},
+		{name: "extreme demand", demand: 1_000_000, stock: 1000, want: 1, tolerance: 1e-10},
+		{name: "very large demand approximation", demand: 100_000_000_000, stock: 100_000_000_000, want: 0.5, tolerance: 1e-5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if strconv.IntSize == 32 && tt.stock > math.MaxInt32 {
+				t.Skip("stock value exceeds the platform int size")
+			}
+			got := poissonStockoutProbability(tt.demand, int(tt.stock))
+			if math.IsNaN(got) || math.IsInf(got, 0) || math.Abs(got-tt.want) > tt.tolerance {
+				t.Fatalf("poissonStockoutProbability(%v, %d) = %.15g; want %.15g ± %g", tt.demand, tt.stock, got, tt.want, tt.tolerance)
 			}
 		})
 	}
