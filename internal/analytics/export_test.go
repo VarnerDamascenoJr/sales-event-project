@@ -153,6 +153,33 @@ func TestBuildDocumentWithInventoryMarshalsExtremeStockoutRisk(t *testing.T) {
 	}
 }
 
+func TestBuildDocumentWithInventoryMarshalsLargeDemandWithSufficientStock(t *testing.T) {
+	base := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	document := BuildDocumentWithInventory(
+		base.Add(time.Hour),
+		Source{SalesEventID: "event-1", Filter: "sales_event_id"},
+		[]Event{
+			{EventType: "sale.created", OccurredAt: base, SalesEventID: "event-1", SaleID: "sale-1", Status: "COMPLETED"},
+			{EventType: "sale.item.created", OccurredAt: base, SalesEventID: "event-1", SaleID: "sale-1", TicketID: "ticket-vip", TicketType: "vip", Quantity: 100},
+			{EventType: "sale.created", OccurredAt: base.Add(5 * time.Minute), SalesEventID: "event-1", SaleID: "sale-2", Status: "COMPLETED"},
+			{EventType: "sale.item.created", OccurredAt: base.Add(5 * time.Minute), SalesEventID: "event-1", SaleID: "sale-2", TicketID: "ticket-vip", TicketType: "vip", Quantity: 100},
+		},
+		[]WindowSpec{{Name: "5m", Duration: 5 * time.Minute}},
+		[]TicketInventory{{SalesEventID: "event-1", TicketID: "ticket-vip", TicketType: "vip", AvailableQuantity: 2000}},
+	)
+
+	if len(document.StockoutRisks) != 1 {
+		t.Fatalf("expected one stockout risk, got %d", len(document.StockoutRisks))
+	}
+	risk := document.StockoutRisks[0]
+	if risk.ExpectedDemand != 1200 || risk.StockoutProbability > 1e-30 || risk.RiskBand != StockoutRiskBandLow {
+		t.Fatalf("unexpected stockout risk for sufficient inventory: %+v", risk)
+	}
+	if _, err := json.Marshal(document); err != nil {
+		t.Fatalf("marshal document with large demand: %v", err)
+	}
+}
+
 func findWindow(t *testing.T, windows []WindowAggregate, size string, start time.Time) WindowAggregate {
 	t.Helper()
 	for _, window := range windows {
