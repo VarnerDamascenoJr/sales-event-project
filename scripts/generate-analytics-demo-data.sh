@@ -1,7 +1,8 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env sh
+set -eu
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+script_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 
-exec go run "$repo_root/cmd/analytics-demo-data" "$@"
+cd "$repo_root"
+exec go run ./cmd/analytics-demo-data "$@"
