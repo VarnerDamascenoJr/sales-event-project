@@ -179,6 +179,21 @@ func validateConfig(cfg config) error {
 	if err := validateUUID("vip-ticket-id", cfg.VIPTicketID); err != nil {
 		return err
 	}
+	if cfg.ResetDemoInventory {
+		return validateDemoInventoryReset(cfg)
+	}
+	return nil
+}
+
+func validateDemoInventoryReset(cfg config) error {
+	if !strings.EqualFold(cfg.SalesEventID, defaultSalesEventID) ||
+		!strings.EqualFold(cfg.GeneralTicketID, defaultGeneralTicketID) ||
+		!strings.EqualFold(cfg.VIPTicketID, defaultVIPTicketID) {
+		return errors.New("reset-demo-inventory only supports the seeded demo event and ticket IDs")
+	}
+	if cfg.GeneralStock < 0 || cfg.VIPStock < 0 || int64(cfg.GeneralStock) > 1<<31-1 || int64(cfg.VIPStock) > 1<<31-1 {
+		return errors.New("demo inventory values must fit a non-negative PostgreSQL integer")
+	}
 	return nil
 }
 
