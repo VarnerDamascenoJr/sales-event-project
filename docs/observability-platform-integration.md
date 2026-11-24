@@ -77,8 +77,11 @@ No Grafana da plataforma (`http://localhost:3001`, `admin` / `admin`):
 - Loki: filtre logs por correlacao:
 
 ```logql
-{service_name=~"sales-event-api|sales-event-worker"} | json | correlation_id="corr-demo-sale-001"
+{service_name=~"sales-event-api|sales-event-worker"} | correlation_id="corr-demo-sale-001"
 ```
+
+Nos logs OTLP enviados ao Loki, `correlation_id` e metadado estruturado e o
+corpo da mensagem pode ser texto. Nao aplique `| json` a esse fluxo.
 
 - Prometheus: confira os targets e metricas:
 
